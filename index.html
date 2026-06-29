@@ -2,243 +2,54 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cleansheet</title>
-<script src="https://apis.google.com/js/api.js"></script>
+<title>Cleansheet — Setup Maestro</title>
 <script src="https://accounts.google.com/gsi/client"></script>
 <style>
-:root{
-  --bg:#0a0b0e;--panel:#111318;--panel2:#181b22;--panel3:#1e222c;
-  --line:#252930;--line2:#2e333f;
-  --tx:#eceef2;--tx2:#8890a4;--tx3:#4a5166;
-  --accent:#c8f060;--accent-dim:#1e2a0a;
-  --show:#f6c046;--sc:#4cc28a;--lc:#e26ba6;--llegada:#7a8190;--cambio:#ef7a5a;
-  --danger:#f47b7b;--danger-dim:#2a0a0a;
-  --mono:ui-monospace,'SF Mono',Consolas,monospace;
-  --sans:'Helvetica Neue',Arial,system-ui,sans-serif;
-  --r:8px;--rl:12px;
-}
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-html,body{height:100%;background:var(--bg);color:var(--tx);font-family:var(--sans);-webkit-font-smoothing:antialiased}
-body{display:flex;flex-direction:column;height:100vh;overflow:hidden}
-
-/* TOPBAR */
-.topbar{display:flex;align-items:center;height:52px;background:var(--panel);border-bottom:1px solid var(--line);flex-shrink:0;z-index:40}
-.logo{display:flex;align-items:center;gap:10px;padding:0 20px;border-right:1px solid var(--line);height:100%;cursor:pointer;min-width:180px}
-.logo-mark{width:28px;height:28px;background:var(--accent);border-radius:7px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
-.logo-mark svg{width:16px;height:16px}
-.logo-name{font-size:15px;font-weight:700;letter-spacing:-.3px;color:var(--tx)}
-.breadcrumb{display:flex;align-items:center;gap:6px;padding:0 20px;flex:1;font-size:13px;color:var(--tx2)}
-.breadcrumb .sep{color:var(--tx3)}
-.breadcrumb .current{color:var(--tx);font-weight:600}
-.back{display:flex;align-items:center;gap:5px;background:transparent;border:none;color:var(--tx2);cursor:pointer;font-size:13px;font-family:var(--sans);padding:4px 8px;border-radius:var(--r);transition:.12s}
-.back:hover{background:var(--panel2);color:var(--tx)}
-.back svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2}
-.topbar-actions{display:flex;align-items:center;gap:8px;padding:0 16px}
-.tbtn{display:inline-flex;align-items:center;gap:6px;font-family:var(--sans);font-size:12px;font-weight:600;padding:7px 13px;border-radius:var(--r);cursor:pointer;transition:.12s;border:1px solid var(--line2);background:var(--panel2);color:var(--tx2)}
-.tbtn:hover{background:var(--panel3);color:var(--tx);border-color:#3a3f4e}
-.tbtn svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.8}
-.tbtn.primary{background:var(--accent);border-color:var(--accent);color:#0a0b0e;font-weight:700}
-.tbtn.primary:hover{filter:brightness(1.08)}
-.tbtn.danger{background:var(--danger-dim);border-color:var(--danger);color:var(--danger)}
-.user-pill{display:flex;align-items:center;gap:8px;padding:4px 12px;border-radius:20px;background:var(--panel2);border:1px solid var(--line2);font-size:12px;color:var(--tx2)}
-.user-avatar{width:22px;height:22px;border-radius:50%;object-fit:cover}
-.user-dot{width:7px;height:7px;border-radius:50%;background:var(--sc);flex-shrink:0;box-shadow:0 0 5px var(--sc)}
-
-/* LAYOUT */
-.main{display:flex;flex:1;overflow:hidden}
-.sidebar{width:180px;flex-shrink:0;background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;transition:width .2s}
-.sidebar.hidden{display:none}
-.nav{flex:1;padding:10px 8px;overflow-y:auto}
-.nav-label{font-size:10px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:var(--tx3);padding:10px 8px 4px}
-.nav-item{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:var(--r);cursor:pointer;color:var(--tx2);font-size:13px;font-weight:500;transition:.12s;border:none;background:transparent;width:100%;text-align:left;font-family:var(--sans)}
-.nav-item:hover{background:var(--panel2);color:var(--tx)}
-.nav-item.active{background:var(--accent-dim);color:var(--accent)}
-.nav-item svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;flex-shrink:0}
-.content{flex:1;overflow-y:auto;display:flex;flex-direction:column}
-
-/* LOGIN */
-.login-screen{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:24px;padding:40px}
-.login-logo{width:56px;height:56px;background:var(--accent);border-radius:14px;display:flex;align-items:center;justify-content:center}
-.login-logo svg{width:32px;height:32px}
-.login-title{font-size:28px;font-weight:800;letter-spacing:-.03em;color:var(--tx)}
-.login-sub{font-size:15px;color:var(--tx2);text-align:center;max-width:340px;line-height:1.6}
-.login-btn{display:flex;align-items:center;gap:10px;padding:13px 24px;border-radius:var(--rl);background:white;color:#1a1a1a;font-size:14px;font-weight:600;cursor:pointer;border:none;transition:.12s;font-family:var(--sans)}
-.login-btn:hover{filter:brightness(.95);transform:translateY(-1px)}
-.login-btn svg{width:20px;height:20px}
-.login-features{display:flex;flex-direction:column;gap:8px;margin-top:8px}
-.login-feat{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--tx2)}
-.login-feat svg{width:14px;height:14px;stroke:var(--sc);fill:none;stroke-width:2;flex-shrink:0}
-
-/* HOME */
-.home{padding:32px 28px}
-.home-kicker{font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--tx3);font-weight:700;margin-bottom:8px}
-.home-title{font-size:28px;font-weight:800;letter-spacing:-.03em;color:var(--tx)}
-.home-sub{font-size:14px;color:var(--tx2);margin-top:6px;margin-bottom:24px}
-.drive-status{display:flex;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--line);border-radius:var(--rl);padding:12px 16px;margin-bottom:24px}
-.drive-dot{width:8px;height:8px;border-radius:50%;background:var(--sc);flex-shrink:0;box-shadow:0 0 6px var(--sc)}
-.drive-status span{font-size:13px;color:var(--tx2)}
-.drive-status strong{color:var(--tx)}
-.ds-right{margin-left:auto;display:flex;align-items:center;gap:8px}
-.ds-folder{font-family:var(--mono);font-size:11px;color:var(--accent)}
-
-/* SETUP BANNER */
-.setup-banner{background:var(--panel);border:1px solid #3a5010;border-radius:var(--rl);padding:20px;margin-bottom:24px}
-.setup-banner h3{font-size:15px;font-weight:700;color:var(--accent);margin-bottom:8px;display:flex;align-items:center;gap:8px}
-.setup-banner h3 svg{width:16px;height:16px;stroke:var(--accent);fill:none;stroke-width:1.8}
-.setup-banner p{font-size:13px;color:var(--tx2);line-height:1.6;margin-bottom:14px}
-.setup-input-row{display:flex;gap:8px;align-items:center}
-.setup-input{flex:1;background:var(--panel2);border:1px solid var(--line2);border-radius:var(--r);padding:9px 12px;font-size:13px;color:var(--tx);font-family:var(--mono);outline:none;transition:.12s}
-.setup-input:focus{border-color:var(--accent)}
-.setup-input::placeholder{color:var(--tx3)}
-
-/* PROJECTS */
-.projects-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px}
-.project-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--rl);padding:18px;cursor:pointer;transition:border-color .15s,transform .1s;display:flex;flex-direction:column;gap:12px}
-.project-card:hover{border-color:var(--line2);transform:translateY(-2px)}
-.project-card.active-card{border-color:var(--accent)}
-.pc-top{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
-.pc-name{font-size:16px;font-weight:700;letter-spacing:-.02em;color:var(--tx)}
-.pc-badge{font-size:10px;font-weight:700;padding:3px 8px;border-radius:20px;background:var(--accent-dim);color:var(--accent);flex-shrink:0}
-.pc-meta{font-size:12px;color:var(--tx3);font-family:var(--mono)}
-.pc-stats{display:flex;gap:14px}
-.pc-stat-val{font-size:18px;font-weight:700;color:var(--tx)}
-.pc-stat-label{font-size:10px;color:var(--tx3);letter-spacing:.06em;text-transform:uppercase}
-.pc-footer{display:flex;align-items:center;justify-content:space-between;padding-top:10px;border-top:1px solid var(--line)}
-.pc-date{font-size:11px;color:var(--sc)}
-.pc-arrow{color:var(--tx3);font-size:18px;transition:.12s}
-.project-card:hover .pc-arrow{color:var(--accent);transform:translateX(3px)}
-
-/* LOADING */
-.loading{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;flex:1;color:var(--tx2)}
-.spinner{width:32px;height:32px;border:2px solid var(--line2);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}
-.loading-text{font-size:13px;color:var(--tx2)}
-
-/* EVENT */
-.event-filters{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:12px 20px;border-bottom:1px solid var(--line);background:var(--panel);flex-shrink:0}
-.filter-label{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--tx3);margin-right:4px}
-.filter-btn{font-family:var(--sans);font-size:12px;font-weight:600;padding:5px 12px;border-radius:20px;cursor:pointer;transition:.12s;border:1px solid var(--line2);background:transparent;color:var(--tx2)}
-.filter-btn:hover{color:var(--tx);border-color:#3a3f4e}
-.filter-btn.on{background:var(--accent);border-color:var(--accent);color:#0a0b0e}
-.filter-sep{width:1px;height:20px;background:var(--line2);margin:0 4px}
-.section-tabs{display:flex;border-bottom:1px solid var(--line);background:var(--panel);flex-shrink:0;overflow-x:auto}
-.sec-tab{display:flex;align-items:center;gap:7px;font-family:var(--sans);font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--tx3);background:transparent;border:none;border-bottom:2px solid transparent;padding:12px 16px;cursor:pointer;transition:.12s;white-space:nowrap}
-.sec-tab:hover{color:var(--tx2)}
-.sec-tab.active{color:var(--accent);border-bottom-color:var(--accent)}
-.sec-tab svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.8}
-
-/* HORARIOS */
-.section-content{flex:1;overflow-y:auto;padding:20px}
-.h-legend{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:18px}
-.h-li{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--tx2)}
-.h-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
-.sync-note{margin-left:auto;font-size:11px;color:var(--sc);font-family:var(--mono);cursor:pointer}
-.sync-note:hover{text-decoration:underline}
-.day-block{margin-bottom:28px}
-.day-block-header{display:flex;align-items:center;gap:12px;padding:10px 14px;background:var(--panel);border:1px solid var(--line);border-radius:var(--rl) var(--rl) 0 0;border-bottom:none}
-.day-block-name{font-size:16px;font-weight:800;letter-spacing:-.02em;color:var(--tx)}
-.day-block-meta{font-size:12px;color:var(--tx3);font-family:var(--mono)}
-.day-extra{margin-left:auto;display:flex;align-items:center;gap:16px}
-.day-puertas{font-size:12px;color:var(--tx2)}.day-puertas span{font-family:var(--mono);color:var(--accent);font-weight:700}
-.schedule-wrap{overflow-x:auto}
-.schedule-table{width:100%;border-collapse:collapse;font-size:13px;min-width:680px}
-.schedule-table th{text-align:left;font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--tx3);padding:8px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
-.schedule-table td{padding:0;border-bottom:1px solid var(--line);vertical-align:top}
-.act-num{width:32px;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--tx3);font-family:var(--mono);border-right:1px solid var(--line);height:100%;flex-shrink:0;padding:10px 0}
-.act-main{padding:10px 12px}
-.act-artist{font-size:14px;font-weight:700;color:var(--tx);margin-bottom:3px}
-.act-stage-tag{display:inline-flex;align-items:center;gap:4px;font-size:10px;color:var(--tx3);font-family:var(--mono)}
-.act-stage-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
-.act-show{padding:10px 12px;min-width:130px}
-.show-time{font-size:15px;font-weight:700;font-family:var(--mono);color:var(--show)}
-.show-dur{font-size:10px;color:var(--tx3);margin-top:2px}
-.act-phases{display:flex;flex-direction:column;gap:4px;padding:10px 12px;min-width:280px}
-.phase-row{display:flex;align-items:center;gap:6px;font-size:11px}
-.phase-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
-.phase-name{color:var(--tx3);width:70px;font-size:10px;letter-spacing:.06em;text-transform:uppercase}
-.phase-time{font-family:var(--mono);color:var(--tx2)}
-.phase-dur{font-size:10px;color:var(--tx3);margin-left:4px}
-.act-notes{padding:10px 12px;font-size:11px;color:var(--tx3);font-style:italic;min-width:150px}
-
-/* SUMA */
-.suma-wrap{padding:20px;overflow-y:auto;flex:1}
-.suma-header{display:flex;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap}
-.suma-title{font-size:20px;font-weight:800;letter-spacing:-.02em;color:var(--tx);flex:1}
-.suma-stat{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:8px 16px;text-align:center}
-.suma-stat-val{font-size:20px;font-weight:700;color:var(--accent)}
-.suma-stat-label{font-size:10px;color:var(--tx3);letter-spacing:.06em;text-transform:uppercase;margin-top:2px}
-.banda-block{background:var(--panel);border:1px solid var(--line);border-radius:var(--rl);margin-bottom:16px;overflow:hidden}
-.banda-header{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--panel2)}
-.banda-name{font-size:14px;font-weight:700;color:var(--tx)}
-.banda-meta{font-size:11px;color:var(--tx3);font-family:var(--mono)}
-.banda-show{margin-left:auto;font-family:var(--mono);font-size:13px;color:var(--show);font-weight:700}
-.input-table{width:100%;border-collapse:collapse;font-size:12px}
-.input-table th{text-align:left;font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--tx3);padding:6px 12px;border-bottom:1px solid var(--line);background:var(--panel3)}
-.input-table td{padding:5px 12px;border-bottom:1px solid var(--line2);font-family:var(--mono);font-size:12px}
-.input-table tr:last-child td{border-bottom:none}
-.input-table tr:hover td{background:var(--panel2)}
-.ch-num{color:var(--tx3);font-size:11px}
-.ch-inst{color:var(--tx);font-weight:500;font-family:var(--sans)}
-.ch-mic{color:var(--tx2)}
-.ch-infra{color:var(--accent);font-size:11px}
-.ch-notes{color:var(--tx3);font-style:italic;font-size:11px;font-family:var(--sans)}
-.section-divider{font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--tx3);padding:8px 12px;background:var(--panel3);border-bottom:1px solid var(--line);border-top:1px solid var(--line)}
-
-/* PERSONAL */
-.personal-wrap{padding:24px;overflow-y:auto;flex:1}
-.personal-top{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:24px;gap:16px;flex-wrap:wrap}
-.personal-title{font-size:22px;font-weight:800;letter-spacing:-.03em;color:var(--tx)}
-.personal-sub{font-size:13px;color:var(--tx2);margin-top:4px}
-.personal-stats{display:flex;gap:10px;flex-shrink:0}
-.pstat{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:8px 16px;text-align:center}
-.pstat-val{font-size:20px;font-weight:700;color:var(--accent)}
-.pstat-label{font-size:10px;color:var(--tx3);letter-spacing:.06em;text-transform:uppercase;margin-top:2px}
-.personal-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px}
-.dept-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--rl);overflow:hidden;transition:border-color .15s}
-.dept-card:hover{border-color:var(--line2)}
-.dept-header{padding:14px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px}
-.dept-icon{width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
-.dept-icon svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:1.8}
-.dept-info{flex:1}
-.dept-name{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
-.dept-count{font-size:11px;color:var(--tx3);margin-top:1px;font-family:var(--mono)}
-.dept-body{padding:6px 0}
-.person-row{display:flex;align-items:center;gap:12px;padding:8px 16px;transition:background .1s;cursor:default}
-.person-row:hover{background:var(--panel2)}
-.person-avatar{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;letter-spacing:.02em}
-.person-info{flex:1;min-width:0}
-.person-name{font-size:13px;color:var(--tx);font-weight:600}
-.person-rol{font-size:11px;color:var(--tx3);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.person-right{display:flex;flex-direction:column;align-items:flex-end;gap:3px;flex-shrink:0}
-.person-turno{font-family:var(--mono);font-size:10px;background:var(--panel3);border:1px solid var(--line2);border-radius:20px;padding:2px 7px;color:var(--tx2);white-space:nowrap}
-.person-escenario{font-size:10px;color:var(--tx3);font-family:var(--mono)}
-.dept-footer{padding:10px 16px;border-top:1px solid var(--line);background:var(--panel2)}
-.dept-footer-text{font-size:11px;color:var(--tx3)}
-
-/* PLACEHOLDER */
-.placeholder-section{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:40px;color:var(--tx3)}
-.placeholder-section svg{width:40px;height:40px;stroke:var(--tx3);fill:none;stroke-width:1.2;opacity:.5}
-.placeholder-section h3{font-size:16px;font-weight:700;color:var(--tx2)}
-.placeholder-section p{font-size:13px;text-align:center;max-width:320px;line-height:1.6}
-.coming{font-size:11px;font-family:var(--mono);background:var(--panel2);border:1px solid var(--line2);padding:4px 10px;border-radius:20px;color:var(--tx3)}
-
-/* EMPTY STATE */
-.empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:60px 40px;text-align:center}
-.empty-state svg{width:48px;height:48px;stroke:var(--tx3);fill:none;stroke-width:1.2;opacity:.4}
-.empty-state h3{font-size:18px;font-weight:700;color:var(--tx2)}
-.empty-state p{font-size:13px;color:var(--tx3);max-width:300px;line-height:1.6}
-
-::-webkit-scrollbar{width:4px;height:4px}
-::-webkit-scrollbar-track{background:transparent}
-::-webkit-scrollbar-thumb{background:var(--line2);border-radius:2px}
+:root{--bg:#0a0b0e;--panel:#111318;--panel2:#181b22;--line:#252930;--line2:#2e333f;--tx:#eceef2;--tx2:#8890a4;--tx3:#4a5166;--accent:#c8f060;--accent-dim:#1e2a0a;--sc:#4cc28a;--danger:#f47b7b;--mono:ui-monospace,'SF Mono',Consolas,monospace;--sans:'Helvetica Neue',Arial,system-ui,sans-serif;--r:8px;--rl:12px}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--tx);font-family:var(--sans);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;-webkit-font-smoothing:antialiased}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:32px;max-width:560px;width:100%}
+.logo{display:flex;align-items:center;gap:10px;margin-bottom:24px}
+.logo-mark{width:32px;height:32px;background:var(--accent);border-radius:8px;display:flex;align-items:center;justify-content:center}
+.logo-mark svg{width:18px;height:18px}
+.logo-name{font-size:16px;font-weight:700;color:var(--tx)}
+.logo-sub{font-size:12px;color:var(--tx3);margin-left:4px}
+h1{font-size:22px;font-weight:800;letter-spacing:-.03em;margin-bottom:8px}
+.sub{font-size:14px;color:var(--tx2);line-height:1.6;margin-bottom:24px}
+.sheet-target{background:var(--panel2);border:1px solid var(--line2);border-radius:var(--r);padding:12px 16px;margin-bottom:24px;font-family:var(--mono);font-size:12px;color:var(--accent)}
+.sheet-target span{color:var(--tx3);font-family:var(--sans);font-size:11px;display:block;margin-bottom:4px}
+.steps{display:flex;flex-direction:column;gap:10px;margin-bottom:24px}
+.step{display:flex;align-items:flex-start;gap:12px;padding:12px 14px;background:var(--panel2);border:1px solid var(--line2);border-radius:var(--r)}
+.step-num{width:24px;height:24px;border-radius:50%;background:var(--accent-dim);color:var(--accent);font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.step-body{flex:1}
+.step-title{font-size:13px;font-weight:600;color:var(--tx);margin-bottom:2px}
+.step-desc{font-size:12px;color:var(--tx2);line-height:1.5}
+.step.done .step-num{background:var(--sc);color:#0a0b0e}
+.step.done .step-title{color:var(--sc)}
+.step.error .step-num{background:var(--danger);color:#0a0b0e}
+.step.error .step-title{color:var(--danger)}
+.step.active .step-num{animation:pulse 1s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+.btn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:13px;border-radius:var(--rl);font-size:14px;font-weight:700;cursor:pointer;border:none;transition:.12s;font-family:var(--sans)}
+.btn-google{background:white;color:#1a1a1a}
+.btn-google:hover{filter:brightness(.95)}
+.btn-google svg{width:20px;height:20px}
+.btn-run{background:var(--accent);color:#0a0b0e;margin-top:10px}
+.btn-run:hover{filter:brightness(1.08)}
+.btn-run:disabled{opacity:.4;cursor:not-allowed}
+.log{background:var(--panel2);border:1px solid var(--line2);border-radius:var(--r);padding:14px;font-family:var(--mono);font-size:11px;color:var(--tx2);line-height:1.8;margin-top:16px;max-height:200px;overflow-y:auto;display:none}
+.log.visible{display:block}
+.log .ok{color:var(--sc)}
+.log .err{color:var(--danger)}
+.log .info{color:var(--accent)}
+.success-banner{background:var(--accent-dim);border:1px solid #3a5010;border-radius:var(--rl);padding:16px;text-align:center;margin-top:16px;display:none}
+.success-banner h3{color:var(--accent);font-size:16px;margin-bottom:6px}
+.success-banner p{color:var(--tx2);font-size:13px}
 </style>
 </head>
 <body>
-
-<!-- TOPBAR -->
-<div class="topbar" id="topbar">
-  <div class="logo" onclick="goHome()">
+<div class="card">
+  <div class="logo">
     <div class="logo-mark">
       <svg viewBox="0 0 16 16" fill="none">
         <rect x="1" y="1" width="6" height="9" rx="1" fill="#0a0b0e"/>
@@ -248,688 +59,220 @@ body{display:flex;flex-direction:column;height:100vh;overflow:hidden}
       </svg>
     </div>
     <span class="logo-name">Cleansheet</span>
-  </div>
-  <div class="breadcrumb" id="breadcrumb">
-    <span style="color:var(--tx3)">Proyectos activos</span>
-  </div>
-  <div class="topbar-actions" id="topbar-actions">
-    <div id="auth-area"></div>
-  </div>
-</div>
-
-<!-- MAIN -->
-<div class="main">
-  <div class="sidebar hidden" id="sidebar">
-    <div class="nav">
-      <div class="nav-label">Secciones</div>
-      <button class="nav-item active" id="nav-horarios" onclick="showSection('horarios')">
-        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>Horarios
-      </button>
-      <button class="nav-item" id="nav-overall" onclick="showSection('overall')">
-        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>Overall
-      </button>
-      <button class="nav-item" id="nav-suma" onclick="showSection('suma')">
-        <svg viewBox="0 0 24 24"><path d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9m0 0h18"/></svg>Suma
-      </button>
-      <button class="nav-item" id="nav-iolist" onclick="showSection('iolist')">
-        <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/></svg>IO List
-      </button>
-      <button class="nav-item" id="nav-personal" onclick="showSection('personal')">
-        <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>Personal
-      </button>
-    </div>
+    <span class="logo-sub">Setup · MAESTRO</span>
   </div>
 
-  <div class="content" id="content">
+  <h1>Configurar hoja MAESTRO</h1>
+  <div class="sub">Esto escribirá las hojas <strong>PERSONAL</strong> y <strong>TURNOS</strong> en tu Google Sheet MAESTRO con todas las cabeceras y datos base del equipo.</div>
 
-    <!-- LOGIN -->
-    <div id="view-login" class="login-screen">
-      <div class="login-logo">
-        <svg viewBox="0 0 16 16" fill="none">
-          <rect x="1" y="1" width="6" height="9" rx="1" fill="#0a0b0e"/>
-          <rect x="9" y="1" width="6" height="5" rx="1" fill="#0a0b0e"/>
-          <rect x="9" y="8" width="6" height="7" rx="1" fill="#0a0b0e"/>
-          <rect x="1" y="12" width="6" height="3" rx="1" fill="#0a0b0e"/>
-        </svg>
-      </div>
-      <div class="login-title">Cleansheet</div>
-      <div class="login-sub">Gestión técnica de festivales. Conecta con Google Drive para empezar.</div>
-      <button class="login-btn" onclick="signIn()">
-        <svg viewBox="0 0 24 24" fill="none"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
-        Conectar con Google
-      </button>
-      <div class="login-features">
-        <div class="login-feat"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>Lee tus Google Sheets directamente</div>
-        <div class="login-feat"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>Sincronización automática con Drive</div>
-        <div class="login-feat"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>Autocompletado desde el libro MAESTRO</div>
+  <div class="sheet-target">
+    <span>Sheet destino</span>
+    CLEANSHEET — MAESTRO · ID: 1I5Ogz98bIZAkHNo9azebEJWH8RfNUIJzqG0WCW8MHJM
+  </div>
+
+  <div class="steps" id="steps">
+    <div class="step" id="step-auth">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <div class="step-title">Conectar con Google</div>
+        <div class="step-desc">Autoriza acceso de escritura a tu Google Sheets</div>
       </div>
     </div>
-
-    <!-- LOADING -->
-    <div id="view-loading" style="display:none;flex:1;display:none;flex-direction:column">
-      <div class="loading">
-        <div class="spinner"></div>
-        <div class="loading-text" id="loading-text">Conectando con Google Drive...</div>
+    <div class="step" id="step-personal">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <div class="step-title">Crear hoja PERSONAL</div>
+        <div class="step-desc">Cabeceras + equipo base (Dami, Moi, Alex, Javier, Lucas, Grela, Diego)</div>
       </div>
     </div>
-
-    <!-- HOME -->
-    <div id="view-home" style="display:none" class="home">
-      <div class="home-kicker">Admin · Temporada 2026</div>
-      <div class="home-title">Proyectos activos</div>
-      <div class="home-sub">Eventos desde tu Google Drive</div>
-
-      <div class="drive-status" id="drive-status">
-        <div class="drive-dot"></div>
-        <span>Drive conectado · carpeta <strong>EVENTOS ACTIVOS</strong></span>
-        <div class="ds-right">
-          <span class="ds-folder" id="sheet-id-display"></span>
-          <button class="tbtn" onclick="loadProjects()" style="padding:5px 10px;font-size:11px">
-            <svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
-            Actualizar
-          </button>
-        </div>
-      </div>
-
-      <!-- SETUP si no hay MAESTRO -->
-      <div id="setup-banner" class="setup-banner" style="display:none">
-        <h3>
-          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-          Primer uso — pega el ID de tu hoja MAESTRO
-        </h3>
-        <p>Crea un Google Sheet llamado <strong>CLEANSHEET — MAESTRO</strong> con hojas: PERSONAS, EMPRESAS, ARTISTAS. Luego pega aquí el ID de la URL (la parte entre /d/ y /edit).</p>
-        <div class="setup-input-row">
-          <input class="setup-input" id="maestro-id-input" placeholder="1BVoz4BlwiSULroGu8wKQsaVfqbvabYkD0oIVBQDdrcw" />
-          <button class="tbtn primary" onclick="saveMaestroId()">Guardar</button>
-        </div>
-      </div>
-
-      <div class="projects-grid" id="projects-grid">
-        <div class="empty-state" style="grid-column:1/-1">
-          <svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
-          <h3>Sin proyectos</h3>
-          <p>Crea una carpeta por evento dentro de EVENTOS ACTIVOS en tu Drive. Cada carpeta es un proyecto.</p>
-        </div>
+    <div class="step" id="step-turnos">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <div class="step-title">Crear hoja TURNOS</div>
+        <div class="step-desc">Plantilla de asignación de turnos por evento y escenario</div>
       </div>
     </div>
+  </div>
 
-    <!-- EVENT VIEW -->
-    <div id="view-event" style="display:none;flex-direction:column;height:100%">
-      <div class="event-filters" id="event-filters"></div>
-      <div class="section-tabs">
-        <button class="sec-tab active" id="tab-horarios" onclick="showSection('horarios')">
-          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>Horarios
-        </button>
-        <button class="sec-tab" id="tab-overall" onclick="showSection('overall')">
-          <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>Overall
-        </button>
-        <button class="sec-tab" id="tab-suma" onclick="showSection('suma')">
-          <svg viewBox="0 0 24 24"><path d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9m0 0h18"/></svg>Suma
-        </button>
-        <button class="sec-tab" id="tab-iolist" onclick="showSection('iolist')">
-          <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>IO List
-        </button>
-        <button class="sec-tab" id="tab-personal" onclick="showSection('personal')">
-          <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>Personal
-        </button>
-      </div>
+  <button class="btn btn-google" id="btn-auth" onclick="doAuth()">
+    <svg viewBox="0 0 24 24" fill="none"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
+    Conectar con Google
+  </button>
+  <button class="btn btn-run" id="btn-run" onclick="runSetup()" disabled>
+    Escribir en Google Sheets →
+  </button>
 
-      <div id="section-horarios" class="section-content"></div>
-      <div id="section-overall" style="display:none"><div class="placeholder-section"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg><h3>Overall</h3><p>Vista resumida del día con horarios y equipamiento.</p><span class="coming">Próximamente</span></div></div>
-      <div id="section-suma" class="suma-wrap" style="display:none"></div>
-      <div id="section-iolist" style="display:none"><div class="placeholder-section"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><h3>IO List</h3><p>Ficha técnica por banda. Exportable a PDF.</p><span class="coming">Próximamente</span></div></div>
-      <div id="section-personal" class="personal-wrap" style="display:none"></div>
-    </div>
-
+  <div class="log" id="log"></div>
+  <div class="success-banner" id="success">
+    <h3>✓ MAESTRO configurado</h3>
+    <p>Las hojas PERSONAL y TURNOS están listas en tu Google Sheet. Puedes cerrar esta ventana y volver a Cleansheet.</p>
   </div>
 </div>
 
 <script>
-/* ── CONFIG ── */
 const CLIENT_ID = '824139869043-ivgbfk9eh02bbj4o4887mch212rcd38h.apps.googleusercontent.com';
-const SCOPES = 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.readonly';
-const EVENTOS_FOLDER = 'EVENTOS ACTIVOS';
+const SHEET_ID  = '1I5Ogz98bIZAkHNo9azebEJWH8RfNUIJzqG0WCW8MHJM';
+const SCOPES    = 'https://www.googleapis.com/auth/spreadsheets';
+let token = null;
+let tokenClient;
 
-let tokenClient, accessToken = null;
-let currentProject = null;
-let activeDay = 'all', activeStage = 'all', activeSection = 'horarios';
-let projectData = null;
-
-const PHASES = [
-  { k:'SC_INI',   k2:'SC_FIN',  t:'Soundcheck', c:'#4cc28a' },
-  { k:'LLEGADA',  k2:'',        t:'Llegada',    c:'#7a8190' },
-  { k:'LC_INI',   k2:'LC_FIN',  t:'Linecheck',  c:'#e26ba6' },
-  { k:'CAMBIO',   k2:'',        t:'Cambio',     c:'#ef7a5a' },
+// ── DATOS ──
+const PERSONAL_HEADERS = [
+  'NOMBRE','AREA','ROL','TELEFONO','EMAIL','TALLA_CAMISETA','DNI','ACREDITACION','NOTAS'
 ];
-const STAGE_COLORS = ['#9b7be8','#e0a23c','#4f8ef7','#4cc28a','#e26ba6'];
-const DEPT_COLORS  = ['#4f8ef7','#4cc28a','#f6c046','#e26ba6','#ef7a5a','#9b7be8'];
+const PERSONAL_DATA = [
+  ['DAMI',   'SONIDO',      'FOH',              '','','','','',''],
+  ['MOI',    'SONIDO',      'MON',              '','','','','',''],
+  ['ALEX',   'SONIDO',      'PA / Auxiliar',    '','','','','',''],
+  ['JAVIER', 'ILUMINACION', 'LX Designer',      '','','','','',''],
+  ['LUCAS',  'ILUMINACION', 'LX Operator',      '','','','','',''],
+  ['GRELA',  'VIDEO',       'Video',            '','','','','',''],
+  ['DIEGO',  'PRODUCCION',  'Jefe de Producción','','','','','',''],
+];
 
-/* ── HELPERS ── */
-function esc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-function durStr(a,b){
-  if(!a||!b)return '';
-  const[ah,am]=a.split(':').map(Number);let[bh,bm]=b.split(':').map(Number);
-  if(bh<ah)bh+=24;const m=(bh*60+bm)-(ah*60+am);if(m<=0)return '';
-  return m>=60?`${Math.floor(m/60)}h${m%60?(m%60)+'m':''}`:`${m}m`;
-}
-function showView(id){
-  ['view-login','view-loading','view-home','view-event'].forEach(v=>{
-    const el=document.getElementById(v);
-    el.style.display=v===id?(v==='view-event'?'flex':'block'):'none';
-  });
-}
-function setLoading(msg){
-  showView('view-loading');
-  document.getElementById('loading-text').textContent=msg||'Cargando...';
-}
-function getMaestroId(){ return localStorage.getItem('cs_maestro_id')||''; }
-function saveMaestroId(){
-  const val=document.getElementById('maestro-id-input').value.trim();
-  if(!val)return;
-  localStorage.setItem('cs_maestro_id',val);
-  document.getElementById('setup-banner').style.display='none';
-}
+const TURNOS_HEADERS = [
+  'NOMBRE','AREA','ROL_EVENTO','ESCENARIO','DIA','TURNO_INI','TURNO_FIN','NOTAS'
+];
+const TURNOS_DATA = [
+  // Ejemplos Rumboia — vacíos para completar
+  ['DAMI',   'SONIDO',      'FOH',              'Principal',      'Sábado 27','11:00','04:00',''],
+  ['MOI',    'SONIDO',      'MON',              'Principal',      'Sábado 27','11:00','04:00',''],
+  ['ALEX',   'SONIDO',      'PA / Auxiliar',    'Principal',      'Sábado 27','11:00','04:00',''],
+  ['JAVIER', 'ILUMINACION', 'LX Designer',      'Principal',      'Sábado 27','11:00','04:00',''],
+  ['LUCAS',  'ILUMINACION', 'LX Operator',      'Principal',      'Sábado 27','11:00','04:00',''],
+  ['GRELA',  'VIDEO',       'Video',            'Principal',      'Sábado 27','11:00','04:00',''],
+  ['DIEGO',  'PRODUCCION',  'Jefe de Producción','',              'Sábado 27','','',''],
+];
 
-/* ── AUTH ── */
-function initGsi(){
+// ── AUTH ──
+window.addEventListener('load', ()=>{
   tokenClient = google.accounts.oauth2.initTokenClient({
     client_id: CLIENT_ID,
     scope: SCOPES,
-    callback: async (resp) => {
-      if(resp.error){ showView('view-login'); return; }
-      accessToken = resp.access_token;
-      updateAuthUI();
-      await loadProjects();
+    callback: resp => {
+      if(resp.error){ log('err','Error de autenticación: '+resp.error); return; }
+      token = resp.access_token;
+      setStep('step-auth','done');
+      log('ok','✓ Conectado con Google');
+      document.getElementById('btn-run').disabled = false;
+      document.getElementById('btn-auth').style.display = 'none';
     }
   });
-}
-
-function signIn(){ tokenClient.requestAccessToken({prompt:'select_account consent'}); }
-function signOut(){
-  google.accounts.oauth2.revoke(accessToken);
-  accessToken=null;
-  document.getElementById('sidebar').classList.add('hidden');
-  showView('view-login');
-  document.getElementById('breadcrumb').innerHTML='<span style="color:var(--tx3)">Proyectos activos</span>';
-  updateAuthUI();
-}
-
-function updateAuthUI(){
-  const area=document.getElementById('auth-area');
-  if(accessToken){
-    area.innerHTML=`
-      <div class="user-pill">
-        <div class="user-dot"></div>
-        <span>Drive conectado</span>
-      </div>
-      <button class="tbtn" onclick="signOut()">Desconectar</button>`;
-  } else {
-    area.innerHTML='';
-  }
-}
-
-/* ── SHEETS API ── */
-async function sheetsGet(spreadsheetId, range){
-  const url=`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}`;
-  const r=await fetch(url,{headers:{Authorization:`Bearer ${accessToken}`}});
-  if(!r.ok) throw new Error(`Sheets error ${r.status}`);
-  const d=await r.json();
-  return d.values||[];
-}
-
-async function driveSearch(query){
-  const url=`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,modifiedTime)&pageSize=50`;
-  const r=await fetch(url,{headers:{Authorization:`Bearer ${accessToken}`}});
-  if(!r.ok) throw new Error(`Drive error ${r.status}`);
-  const d=await r.json();
-  return d.files||[];
-}
-
-/* ── LOAD PROJECTS ── */
-async function loadProjects(){
-  if(!accessToken){ showView('view-login'); return; }
-  setLoading('Buscando carpeta EVENTOS ACTIVOS...');
-
-  try {
-    // Buscar carpeta EVENTOS ACTIVOS
-    const folders=await driveSearch(`name='EVENTOS ACTIVOS' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
-    if(!folders.length){ showNoFolder(); return; }
-    const folderId=folders[0].id;
-
-    // Buscar subcarpetas (eventos)
-    setLoading('Cargando eventos...');
-    const events=await driveSearch(`'${folderId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`);
-
-    // Para cada evento buscar su sheet de datos
-    const projects=[];
-    for(const ev of events){
-      const sheets=await driveSearch(`'${ev.id}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false`);
-      projects.push({ id:ev.id, name:ev.name, modifiedTime:ev.modifiedTime, sheets });
-    }
-
-    renderHome(projects);
-    showView('view-home');
-
-    // Mostrar setup si no hay maestro
-    document.getElementById('setup-banner').style.display=getMaestroId()?'none':'block';
-
-  } catch(e){
-    console.error(e);
-    showView('view-home');
-    document.getElementById('projects-grid').innerHTML=`<div style="color:var(--danger);font-size:13px;padding:20px">Error: ${e.message}</div>`;
-  }
-}
-
-function showNoFolder(){
-  showView('view-home');
-  document.getElementById('projects-grid').innerHTML=`
-    <div class="empty-state" style="grid-column:1/-1">
-      <svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
-      <h3>Carpeta no encontrada</h3>
-      <p>Crea una carpeta llamada exactamente <strong>EVENTOS ACTIVOS</strong> en tu Google Drive.</p>
-    </div>`;
-}
-
-/* ── RENDER HOME ── */
-function renderHome(projects){
-  const grid=document.getElementById('projects-grid');
-  if(!projects.length){
-    grid.innerHTML=`<div class="empty-state" style="grid-column:1/-1">
-      <svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
-      <h3>Sin eventos</h3>
-      <p>Crea subcarpetas dentro de EVENTOS ACTIVOS. Cada carpeta es un evento.</p>
-    </div>`;
-    return;
-  }
-
-  grid.innerHTML=projects.map(p=>{
-    const date=p.modifiedTime?new Date(p.modifiedTime).toLocaleDateString('es-ES',{day:'numeric',month:'short',year:'numeric'}):'';
-    const hasSheet=p.sheets.length>0;
-    return `<div class="project-card ${hasSheet?'active-card':''}" onclick="openProject(${JSON.stringify(JSON.stringify(p))})">
-      <div class="pc-top">
-        <div class="pc-name">${esc(p.name)}</div>
-        <div class="pc-badge">${hasSheet?'Con datos':'Sin datos'}</div>
-      </div>
-      <div class="pc-meta">${p.sheets.length} sheet${p.sheets.length!==1?'s':''} · ${date}</div>
-      <div class="pc-stats">
-        <div class="pc-stat"><div class="pc-stat-val">${p.sheets.length}</div><div class="pc-stat-label">Sheets</div></div>
-      </div>
-      <div class="pc-footer">
-        <span class="pc-date">${hasSheet?'↑ Datos disponibles':'Añade un Sheet al evento'}</span>
-        <span class="pc-arrow">→</span>
-      </div>
-    </div>`;
-  }).join('');
-}
-
-/* ── OPEN PROJECT ── */
-async function openProject(pJson){
-  const p=JSON.parse(pJson);
-  currentProject=p;
-  activeDay='all';activeStage='all';activeSection='horarios';
-
-  if(!p.sheets.length){
-    alert('Este evento no tiene ningún Google Sheet con datos. Añade una hoja llamada "HORARIOS" al evento.');
-    return;
-  }
-
-  document.getElementById('sidebar').classList.remove('hidden');
-  document.getElementById('breadcrumb').innerHTML=`
-    <button class="back" onclick="goHome()"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>Proyectos</button>
-    <span class="sep">/</span><span class="current">${esc(p.name)}</span>`;
-  document.getElementById('topbar-actions').innerHTML=`
-    <div id="auth-area-event" style="display:flex;gap:8px;align-items:center">
-      <button class="tbtn" onclick="syncProject()">
-        <svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>Sincronizar
-      </button>
-      <button class="tbtn primary">
-        <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Exportar PDF
-      </button>
-    </div>`;
-
-  document.getElementById('view-event').style.display='flex';
-  document.getElementById('view-home').style.display='none';
-
-  await syncProject();
-}
-
-async function syncProject(){
-  setLoading(`Leyendo datos de ${currentProject.name}...`);
-  try {
-    const sheet = currentProject.sheets[0]; // primera sheet del evento
-    const sheetId = sheet.id;
-
-    // Leer todas las hojas disponibles
-    const data = {};
-
-    // HORARIOS
-    try {
-      const rows = await sheetsGet(sheetId, 'HORARIOS!A:P');
-      data.horarios = parseSheet(rows);
-    } catch(e){ data.horarios=[]; }
-
-    // INPUT LIST
-    try {
-      const rows = await sheetsGet(sheetId, 'INPUT LIST!A:H');
-      data.inputs = parseSheet(rows);
-    } catch(e){ data.inputs=[]; }
-
-    // MONITORES
-    try {
-      const rows = await sheetsGet(sheetId, 'MONITORES!A:F');
-      data.monitores = parseSheet(rows);
-    } catch(e){ data.monitores=[]; }
-
-    // PERSONAL
-    try {
-      const rows = await sheetsGet(sheetId, 'PERSONAL!A:I');
-      data.personal = parseSheet(rows);
-    } catch(e){ data.personal=[]; }
-
-    // CONFIG
-    try {
-      const rows = await sheetsGet(sheetId, 'CONFIG!A:B');
-      data.config = {};
-      rows.forEach(r=>{ if(r[0])data.config[r[0].trim()]=r[1]||''; });
-    } catch(e){ data.config={}; }
-
-    projectData = data;
-    renderFilters();
-    showView('view-event');
-    document.getElementById('view-event').style.display='flex';
-    showSection('horarios');
-
-  } catch(e){
-    console.error(e);
-    alert('Error leyendo el Sheet: '+e.message);
-    showView('view-event');
-    document.getElementById('view-event').style.display='flex';
-  }
-}
-
-/* Convierte array de arrays en array de objetos usando la primera fila como cabecera */
-function parseSheet(rows){
-  if(!rows||rows.length<2)return[];
-  const headers=rows[0].map(h=>(h||'').trim().toUpperCase());
-  return rows.slice(1).filter(r=>r.some(c=>c&&c.toString().trim())).map(r=>{
-    const obj={};
-    headers.forEach((h,i)=>{ obj[h]=(r[i]||'').toString().trim(); });
-    return obj;
-  });
-}
-
-function goHome(){
-  currentProject=null;projectData=null;
-  document.getElementById('sidebar').classList.add('hidden');
-  document.getElementById('breadcrumb').innerHTML='<span style="color:var(--tx3)">Proyectos activos</span>';
-  updateAuthUI();
-  showView('view-home');
-}
-
-/* ── FILTROS ── */
-function renderFilters(){
-  if(!projectData)return;
-  const dias=[...new Set(projectData.horarios.map(r=>r.DIA).filter(Boolean))];
-  const escenarios=[...new Set(projectData.horarios.map(r=>r.ESCENARIO).filter(Boolean))];
-
-  let html='';
-  if(dias.length>1){
-    html+=`<span class="filter-label">Día</span>`;
-    html+=`<button class="filter-btn ${activeDay==='all'?'on':''}" onclick="setDay('all')">Todos</button>`;
-    dias.forEach(d=>{ html+=`<button class="filter-btn ${activeDay===d?'on':''}" onclick="setDay(${JSON.stringify(d)})">${esc(d)}</button>`; });
-  }
-  if(escenarios.length>1){
-    if(dias.length>1)html+=`<div class="filter-sep"></div>`;
-    html+=`<span class="filter-label">Escenario</span>`;
-    html+=`<button class="filter-btn ${activeStage==='all'?'on':''}" onclick="setStage('all')">Todos</button>`;
-    escenarios.forEach(s=>{ html+=`<button class="filter-btn ${activeStage===s?'on':''}" onclick="setStage(${JSON.stringify(s)})">${esc(s)}</button>`; });
-  }
-  if(!html) html=`<span style="font-size:12px;color:var(--tx3)">📋 ${esc(currentProject.name)} · ${projectData.horarios.length} actuaciones</span>`;
-  document.getElementById('event-filters').innerHTML=html;
-}
-
-function setDay(d){activeDay=d;renderFilters();if(activeSection==='horarios')renderHorarios();}
-function setStage(s){activeStage=s;renderFilters();if(activeSection==='horarios')renderHorarios();}
-
-/* ── SECCIONES ── */
-function showSection(sec){
-  activeSection=sec;
-  ['horarios','overall','suma','iolist','personal'].forEach(s=>{
-    const el=document.getElementById(`section-${s}`);
-    if(el)el.style.display=s===sec?(s==='horarios'||s==='suma'||s==='personal'?'block':'flex'):'none';
-    const tab=document.getElementById(`tab-${s}`);if(tab)tab.classList.toggle('active',s===sec);
-    const nav=document.getElementById(`nav-${s}`);if(nav)nav.classList.toggle('active',s===sec);
-  });
-  if(sec==='horarios')renderHorarios();
-  if(sec==='suma')renderSuma();
-  if(sec==='personal')renderPersonal();
-}
-
-/* ── HORARIOS ── */
-function renderHorarios(){
-  if(!projectData){document.getElementById('section-horarios').innerHTML='';return;}
-  let acts=projectData.horarios;
-  if(activeDay!=='all')acts=acts.filter(a=>a.DIA===activeDay);
-  if(activeStage!=='all')acts=acts.filter(a=>a.ESCENARIO===activeStage);
-
-  const allStages=[...new Set(projectData.horarios.map(r=>r.ESCENARIO).filter(Boolean))];
-  const stageColor=s=>STAGE_COLORS[allStages.indexOf(s)%STAGE_COLORS.length]||'#7a8190';
-
-  const legend=`<div class="h-legend">
-    ${[['var(--show)','Show'],['var(--sc)','Soundcheck'],['var(--lc)','Linecheck'],['var(--llegada)','Llegada'],['var(--cambio)','Cambio']]
-      .map(([c,t])=>`<div class="h-li"><div class="h-dot" style="background:${c}"></div>${t}</div>`).join('')}
-    <span class="sync-note" onclick="syncProject()">↑ ${esc(currentProject.sheets[0]?.name||'Sheet')} · clic para actualizar</span>
-  </div>`;
-
-  if(!acts.length){
-    document.getElementById('section-horarios').innerHTML=legend+`<div class="empty-state"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><h3>Sin actuaciones</h3><p>Añade filas a la hoja HORARIOS de tu Google Sheet.</p></div>`;
-    return;
-  }
-
-  // Agrupar por día
-  const dias=activeDay==='all'?[...new Set(acts.map(a=>a.DIA||''))]:([activeDay]);
-  let html=legend;
-
-  dias.forEach(dia=>{
-    const dayActs=acts.filter(a=>(a.DIA||'')===(dia||''));
-    if(!dayActs.length)return;
-    const config=projectData.config||{};
-
-    html+=`<div class="day-block">
-      <div class="day-block-header">
-        <div class="day-block-name">${esc(dia)||'Actuaciones'}</div>
-        <div class="day-block-meta">${dayActs.length} actuaciones</div>
-        <div class="day-extra">
-          ${config.PUERTAS?`<div class="day-puertas">Puertas <span>${esc(config.PUERTAS)}</span></div>`:''}
-        </div>
-      </div>
-      <div class="schedule-wrap"><table class="schedule-table">
-        <thead><tr>
-          <th style="width:32px"></th>
-          <th style="min-width:160px">Artista</th>
-          <th style="min-width:130px">Show</th>
-          <th>Horarios técnicos</th>
-          <th style="min-width:150px">Notas</th>
-        </tr></thead>
-        <tbody>${dayActs.map((a,i)=>{
-          const phases=PHASES.map(p=>{
-            const ini=a[p.k]||''; const fin=p.k2?a[p.k2]||'':'';
-            if(!ini&&!fin)return '';
-            const t=fin?`${ini} → ${fin}`:ini;
-            const dur=fin?durStr(ini,fin):'';
-            return `<div class="phase-row"><div class="phase-dot" style="background:${p.c}"></div><span class="phase-name">${p.t}</span><span class="phase-time">${esc(t)}</span>${dur?`<span class="phase-dur">${dur}</span>`:''}</div>`;
-          }).filter(Boolean).join('');
-          const sc=stageColor(a.ESCENARIO);
-          const dur=durStr(a.SHOW_INI,a.SHOW_FIN);
-          return `<tr>
-            <td><div class="act-num">${i+1}</div></td>
-            <td><div class="act-main">
-              <div class="act-artist">${esc(a.ARTISTA||'—')}</div>
-              ${a.ESCENARIO?`<div class="act-stage-tag"><div class="act-stage-dot" style="background:${sc}"></div>${esc(a.ESCENARIO)}</div>`:''}
-            </div></td>
-            <td><div class="act-show">
-              <div class="show-time">${esc(a.SHOW_INI||'—')}${a.SHOW_FIN?' → '+esc(a.SHOW_FIN):''}</div>
-              ${dur?`<div class="show-dur">${dur}</div>`:''}
-            </div></td>
-            <td><div class="act-phases">${phases||'<span style="color:var(--tx3);font-size:11px">—</span>'}</div></td>
-            <td><div class="act-notes">${esc(a.NOTAS||'')}</div></td>
-          </tr>`;
-        }).join('')}</tbody>
-      </table></div>
-    </div>`;
-  });
-
-  document.getElementById('section-horarios').innerHTML=html;
-}
-
-/* ── SUMA ── */
-function renderSuma(){
-  if(!projectData){document.getElementById('section-suma').innerHTML='';return;}
-  const inputs=projectData.inputs||[];
-  const monitores=projectData.monitores||[];
-
-  if(!inputs.length){
-    document.getElementById('section-suma').innerHTML=`<div class="empty-state"><svg viewBox="0 0 24 24"><path d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9m0 0h18"/></svg><h3>Sin input list</h3><p>Añade filas a la hoja INPUT LIST de tu Google Sheet.</p></div>`;
-    return;
-  }
-
-  const bandas=[...new Set(inputs.map(r=>r.BANDA).filter(Boolean))];
-  const totalCh=inputs.length;
-
-  let html=`<div class="suma-header">
-    <div class="suma-title">Suma · Input &amp; Monitores</div>
-    <div class="suma-stat"><div class="suma-stat-val">${bandas.length}</div><div class="suma-stat-label">Bandas</div></div>
-    <div class="suma-stat"><div class="suma-stat-val">${totalCh}</div><div class="suma-stat-label">Canales total</div></div>
-  </div>`;
-
-  bandas.forEach(banda=>{
-    const bInputs=inputs.filter(r=>r.BANDA===banda);
-    const bMons=monitores.filter(r=>r.BANDA===banda);
-    // buscar show time desde horarios
-    const horRow=projectData.horarios.find(r=>(r.ARTISTA||'').toLowerCase()===banda.toLowerCase());
-    const showStr=horRow?(horRow.SHOW_INI+(horRow.SHOW_FIN?'–'+horRow.SHOW_FIN:'')):'';
-    const scStr=horRow?(horRow.SC_INI+(horRow.SC_FIN?'–'+horRow.SC_FIN:'')):'';
-
-    html+=`<div class="banda-block">
-      <div class="banda-header">
-        <div class="banda-name">${esc(banda)}</div>
-        <div class="banda-meta">${scStr?'SC '+esc(scStr)+' · ':''} ${bInputs.length} canales</div>
-        ${showStr?`<div class="banda-show">${esc(showStr)}</div>`:''}
-      </div>
-      <div class="section-divider">Input list · ${bInputs.length} canales</div>
-      <table class="input-table">
-        <thead><tr><th style="width:36px">CH</th><th>Instrumento</th><th>Micrófono / DI</th><th>Stands</th><th>Infra</th><th>Notas</th></tr></thead>
-        <tbody>${bInputs.map(r=>`<tr>
-          <td class="ch-num">${esc(r.CH)}</td>
-          <td class="ch-inst">${esc(r.INSTRUMENTO)}</td>
-          <td class="ch-mic">${esc(r.MICRO)}</td>
-          <td class="ch-mic">${esc(r.STANDS||'')}</td>
-          <td class="ch-infra">${esc(r.INFRA||'')}</td>
-          <td class="ch-notes">${esc(r.NOTAS||'')}</td>
-        </tr>`).join('')}</tbody>
-      </table>
-      ${bMons.length?`
-      <div class="section-divider">Monitores · Output list</div>
-      <table class="input-table">
-        <thead><tr><th style="width:36px">Out</th><th style="width:90px">Patch</th><th>Monitor / Destino</th><th>Notas</th></tr></thead>
-        <tbody>${bMons.map(r=>`<tr>
-          <td class="ch-num">${esc(r.OUT)}</td>
-          <td class="ch-mic">${esc(r.PATCH)}</td>
-          <td class="ch-inst">${esc(r.MONITOR||'')}</td>
-          <td class="ch-notes">${esc(r.NOTAS||'')}</td>
-        </tr>`).join('')}</tbody>
-      </table>`:''}
-    </div>`;
-  });
-
-  document.getElementById('section-suma').innerHTML=html;
-}
-
-/* ── PERSONAL ── */
-const DEPT_ICONS = {
-  'SONIDO':      '<svg viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>',
-  'ILUMINACION': '<svg viewBox="0 0 24 24"><path d="M9 18h6M12 2v1M12 21v1M4.22 4.22l.77.77M19.01 4.22l-.77.77M2 12h1M21 12h1M4.22 19.78l.77-.77M19.01 19.78l-.77-.77"/><circle cx="12" cy="12" r="4"/></svg>',
-  'VIDEO':       '<svg viewBox="0 0 24 24"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>',
-  'PRODUCCION':  '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>',
-  'STAGE':       '<svg viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16"/></svg>',
-  'CATERING':    '<svg viewBox="0 0 24 24"><path d="M18 8h1a4 4 0 010 8h-1"/><path d="M2 8h16v9a4 4 0 01-4 4H6a4 4 0 01-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></svg>',
-};
-function getDeptIcon(area){
-  const key=Object.keys(DEPT_ICONS).find(k=>area.toUpperCase().includes(k));
-  return DEPT_ICONS[key]||'<svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>';
-}
-
-function renderPersonal(){
-  if(!projectData){document.getElementById('section-personal').innerHTML='';return;}
-  const personal=projectData.personal||[];
-
-  if(!personal.length){
-    document.getElementById('section-personal').innerHTML=`<div class="empty-state"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/></svg><h3>Sin personal</h3><p>Añade filas a la hoja PERSONAL de tu Google Sheet con columnas: NOMBRE, AREA, ROL, TURNO_INI, TURNO_FIN, ESCENARIO.</p></div>`;
-    return;
-  }
-
-  const areas=[...new Set(personal.map(p=>p.AREA).filter(Boolean))];
-  const totalTurnos=personal.filter(p=>p.TURNO_INI&&p.TURNO_FIN).length;
-
-  let html=`<div class="personal-top">
-    <div>
-      <div class="personal-title">Personal</div>
-      <div class="personal-sub">${esc(currentProject.name)} · equipo técnico</div>
-    </div>
-    <div class="personal-stats">
-      <div class="pstat"><div class="pstat-val">${personal.length}</div><div class="pstat-label">Técnicos</div></div>
-      <div class="pstat"><div class="pstat-val">${areas.length}</div><div class="pstat-label">Áreas</div></div>
-      ${totalTurnos?`<div class="pstat"><div class="pstat-val">${totalTurnos}</div><div class="pstat-label">Con turno</div></div>`:''}
-    </div>
-  </div>
-  <div class="personal-grid">`;
-
-  areas.forEach((area,di)=>{
-    const col=DEPT_COLORS[di%DEPT_COLORS.length];
-    const people=personal.filter(p=>p.AREA===area);
-    const icon=getDeptIcon(area);
-    const escenarios=[...new Set(people.map(p=>p.ESCENARIO).filter(Boolean))];
-
-    html+=`<div class="dept-card">
-      <div class="dept-header">
-        <div class="dept-icon" style="background:${col}22;color:${col}">${icon}</div>
-        <div class="dept-info">
-          <div class="dept-name" style="color:${col}">${esc(area)}</div>
-          <div class="dept-count">${people.length} persona${people.length!==1?'s':''}${escenarios.length?` · ${escenarios.join(', ')}`:''}</div>
-        </div>
-      </div>
-      <div class="dept-body">
-        ${people.map(p=>{
-          const initials=(p.NOMBRE||'?').split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
-          return `<div class="person-row">
-            <div class="person-avatar" style="background:${col}22;color:${col}">${initials}</div>
-            <div class="person-info">
-              <div class="person-name">${esc(p.NOMBRE)}</div>
-              <div class="person-rol">${esc(p.ROL||p.AREA||'')}</div>
-            </div>
-            <div class="person-right">
-              ${(p.TURNO_INI&&p.TURNO_FIN)?`<div class="person-turno">${esc(p.TURNO_INI)} – ${esc(p.TURNO_FIN)}</div>`:''}
-              ${p.ESCENARIO?`<div class="person-escenario">${esc(p.ESCENARIO)}</div>`:''}
-            </div>
-          </div>`;
-        }).join('')}
-      </div>
-      ${people.some(p=>p.TELEFONO)?`<div class="dept-footer">
-        <div class="dept-footer-text">${people.filter(p=>p.TELEFONO).map(p=>`${esc(p.NOMBRE)} · ${esc(p.TELEFONO)}`).join(' &nbsp;·&nbsp; ')}</div>
-      </div>`:''}
-    </div>`;
-  });
-
-  html+='</div>';
-  document.getElementById('section-personal').innerHTML=html;
-}
-
-/* ── INIT ── */
-window.addEventListener('load', ()=>{
-  google.accounts.id.initialize({ client_id: CLIENT_ID });
-  initGsi();
-  showView('view-login');
 });
+
+function doAuth(){
+  tokenClient.requestAccessToken({prompt:'select_account consent'});
+}
+
+// ── SHEETS API ──
+async function sheetsRequest(method, endpoint, body){
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}${endpoint}`;
+  const r = await fetch(url, {
+    method,
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined
+  });
+  const data = await r.json();
+  if(!r.ok) throw new Error(data.error?.message || `HTTP ${r.status}`);
+  return data;
+}
+
+async function ensureSheet(name){
+  // Obtener info del spreadsheet
+  const info = await sheetsRequest('GET', '');
+  const exists = info.sheets?.some(s => s.properties.title === name);
+  if(!exists){
+    log('info', `Creando hoja "${name}"...`);
+    await sheetsRequest('POST', ':batchUpdate', {
+      requests: [{ addSheet: { properties: { title: name } } }]
+    });
+    log('ok', `✓ Hoja "${name}" creada`);
+  } else {
+    log('info', `Hoja "${name}" ya existe — sobreescribiendo...`);
+  }
+}
+
+async function writeSheet(sheetName, headers, rows){
+  const values = [headers, ...rows];
+  await sheetsRequest('PUT',
+    `/values/${encodeURIComponent(sheetName + '!A1')}?valueInputOption=RAW`,
+    { values }
+  );
+  // Formatear cabecera en negrita
+  const info = await sheetsRequest('GET', '');
+  const sheet = info.sheets?.find(s => s.properties.title === sheetName);
+  if(sheet){
+    const sheetId = sheet.properties.sheetId;
+    await sheetsRequest('POST', ':batchUpdate', {
+      requests: [
+        // Negrita en cabecera
+        { repeatCell: {
+          range: { sheetId, startRowIndex:0, endRowIndex:1 },
+          cell: { userEnteredFormat: { textFormat: { bold: true }, backgroundColor: { red:.08, green:.09, blue:.11 } } },
+          fields: 'userEnteredFormat(textFormat,backgroundColor)'
+        }},
+        // Congelar primera fila
+        { updateSheetProperties: {
+          properties: { sheetId, gridProperties: { frozenRowCount: 1 } },
+          fields: 'gridProperties.frozenRowCount'
+        }},
+        // Autosize columnas
+        { autoResizeDimensions: {
+          dimensions: { sheetId, dimension:'COLUMNS', startIndex:0, endIndex:headers.length }
+        }}
+      ]
+    });
+  }
+  log('ok', `✓ ${rows.length} filas escritas en "${sheetName}"`);
+}
+
+// ── SETUP ──
+async function runSetup(){
+  document.getElementById('btn-run').disabled = true;
+  document.getElementById('log').classList.add('visible');
+
+  try {
+    // PERSONAL
+    setStep('step-personal','active');
+    log('info','→ Configurando hoja PERSONAL...');
+    await ensureSheet('PERSONAL');
+    await writeSheet('PERSONAL', PERSONAL_HEADERS, PERSONAL_DATA);
+    setStep('step-personal','done');
+
+    // TURNOS
+    setStep('step-turnos','active');
+    log('info','→ Configurando hoja TURNOS...');
+    await ensureSheet('TURNOS');
+    await writeSheet('TURNOS', TURNOS_HEADERS, TURNOS_DATA);
+    setStep('step-turnos','done');
+
+    log('ok','');
+    log('ok','✓ MAESTRO configurado correctamente');
+    document.getElementById('success').style.display='block';
+
+  } catch(e){
+    log('err','✗ Error: '+e.message);
+    console.error(e);
+  }
+}
+
+// ── UI HELPERS ──
+function setStep(id, state){
+  const el = document.getElementById(id);
+  el.classList.remove('done','error','active');
+  if(state) el.classList.add(state);
+  if(state==='done') el.querySelector('.step-num').textContent='✓';
+  if(state==='error') el.querySelector('.step-num').textContent='✗';
+}
+
+function log(type, msg){
+  const el = document.getElementById('log');
+  const line = document.createElement('div');
+  line.className = type;
+  line.textContent = msg;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
 </script>
 </body>
 </html>
