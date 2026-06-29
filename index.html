@@ -11,7 +11,7 @@
   --bg:#0a0b0e;--panel:#111318;--panel2:#181b22;--panel3:#1e222c;
   --line:#252930;--line2:#2e333f;
   --tx:#eceef2;--tx2:#8890a4;--tx3:#4a5166;
-  --accent:#c8f060;--accent-dim:#1e2a0a;--accent-tx:#0a0b0e;
+  --accent:#a78bfa;--accent-dim:#1e1433;--accent-tx:#0a0b0e;
   --show:#f6c046;--sc:#4cc28a;--lc:#e26ba6;--llegada:#7a8190;--cambio:#ef7a5a;--loadin:#e0a23c;--offstage:#9b7be8;
   --danger:#f47b7b;--danger-dim:#2a0a0a;
   --th-bg:#1a1d25;--th-tx:#8890a4;
@@ -22,7 +22,7 @@
   --bg:#f4f5f7;--panel:#ffffff;--panel2:#f7f8fa;--panel3:#eef0f3;
   --line:#e3e6ea;--line2:#d4d8de;
   --tx:#1a1d23;--tx2:#5a6472;--tx3:#9aa3b2;
-  --accent:#5b8c0a;--accent-dim:#eaf5d6;--accent-tx:#ffffff;
+  --accent:#7c3aed;--accent-dim:#ede9fe;--accent-tx:#ffffff;
   --show:#d4920a;--sc:#2a9d6f;--lc:#c44f8a;--llegada:#6a7280;--cambio:#d4623e;--loadin:#bd7e1a;--offstage:#7d5cc8;
   --danger:#d64545;--danger-dim:#fbe8e8;
   --th-bg:#eef0f3;--th-tx:#5a6472;
@@ -292,7 +292,7 @@ const SCOPES = 'https://www.googleapis.com/auth/spreadsheets https://www.googlea
 
 let tokenClient, accessToken=null;
 let currentProject=null, projectData=null;
-let activeSection='info', activeStage='all', activeBanda=0;
+let activeSection='info', activeStage='all', activeBanda=-1;
 
 const SECTIONS=[
   {id:'info',     label:'Info',     icon:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>'},
@@ -338,6 +338,14 @@ function showView(id){
 function setLoading(m){showView('view-loading');document.getElementById('loading-text').textContent=m||'Cargando...';}
 
 /* ── AUTH ── */
+/* ── EXPORT PDF ── */
+function exportPDF(){
+  const html=document.documentElement;
+  const prev=html.getAttribute('data-theme');
+  html.setAttribute('data-theme','light');
+  setTimeout(()=>{window.print();setTimeout(()=>html.setAttribute('data-theme',prev),800);},150);
+}
+
 window.addEventListener('load',()=>{
   updateThemeIcon(document.documentElement.getAttribute('data-theme'));
   tokenClient=google.accounts.oauth2.initTokenClient({
@@ -440,7 +448,7 @@ function renderHome(projects){
 async function openProject(pJson){
   currentProject=JSON.parse(pJson);
   if(!currentProject.sheets.length){alert('Este evento no tiene ninguna hoja de cálculo.');return;}
-  activeSection='info';activeStage='all';activeBanda=0;
+  activeSection='info';activeStage='all';activeBanda=-1;
   document.getElementById('breadcrumb').innerHTML=`
     <button class="back" onclick="goHome()"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>Proyectos</button>
     <span class="sep">/</span><span class="current">${esc(currentProject.name)}</span>`;
@@ -856,60 +864,73 @@ function getInfo(keys){
     if(info[k]&&info[k].trim())return info[k];
     const ku=k.toUpperCase();
     if(info[ku]&&info[ku].trim())return info[ku];
-    // buscar parcial
     const found=Object.keys(info).find(ik=>ik.toUpperCase().includes(ku));
     if(found&&info[found]&&info[found].trim())return info[found];
   }
   return '—';
 }
+
+function makeLink(val){
+  if(!val||val==='—')return esc(val);
+  if(/^https?:\/\//i.test(val.trim())){
+    return `<a href="${esc(val.trim())}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:underline;word-break:break-all;font-size:13px">${esc(val.trim())}</a>`;
+  }
+  return esc(val);
+}
+
+function renderEscenarios(escStr){
+  if(!escStr||escStr==='—')return '—';
+  // Formato: "2 (Stage 1, Stage 2)" o "Stage 1, Stage 2" o "2"
+  const parenMatch=escStr.match(/\(([^)]+)\)/);
+  if(parenMatch){
+    const num=parseInt(escStr)||'';
+    const names=parenMatch[1].split(',').map(s=>s.trim()).filter(Boolean);
+    return `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">${names.map((n,i)=>`<span style="display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:20px;font-size:12px;font-weight:600;background:${STAGE_COLORS[i%STAGE_COLORS.length]}22;color:${STAGE_COLORS[i%STAGE_COLORS.length]};border:1px solid ${STAGE_COLORS[i%STAGE_COLORS.length]}44">${esc(n)}</span>`).join('')}</div>`;
+  }
+  // Solo número
+  if(/^\d+$/.test(escStr.trim())){
+    const n=parseInt(escStr);
+    return `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">${Array.from({length:n},(_,i)=>`<span style="padding:4px 10px;border-radius:20px;font-size:12px;font-weight:600;background:${STAGE_COLORS[i%STAGE_COLORS.length]}22;color:${STAGE_COLORS[i%STAGE_COLORS.length]}">Stage ${i+1}</span>`).join('')}</div>`;
+  }
+  // Lista de nombres
+  const names=escStr.split(',').map(s=>s.trim()).filter(Boolean);
+  return `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">${names.map((n,i)=>`<span style="padding:4px 10px;border-radius:20px;font-size:12px;font-weight:600;background:${STAGE_COLORS[i%STAGE_COLORS.length]}22;color:${STAGE_COLORS[i%STAGE_COLORS.length]}">${esc(n)}</span>`).join('')}</div>`;
+}
+
 function renderInfo(){
-  const info=projectData.info;
-  // Mostrar todos los campos que existan en la hoja INFO
-  const allKeys=[...new Set(Object.keys(info).filter(k=>!k.includes('_')&&info[k]&&info[k].trim()))];
-  
   const fieldMap=[
-    {keys:['NOMBRE EVENTO','NOMBRE'],label:'Nombre del evento',accent:true},
-    {keys:['UBICACION','UBICACIÓN','LUGAR'],label:'Ubicación',accent:false},
-    {keys:['FECHAS','FECHA'],label:'Fechas',accent:false},
-    {keys:['MONTAJE'],label:'Montaje',accent:false},
-    {keys:['DESMONTAJE'],label:'Desmontaje',accent:false},
-    {keys:['ESCENARIOS'],label:'Escenarios',accent:false},
+    {keys:['NOMBRE EVENTO','NOMBRE'],label:'Nombre del evento',accent:true,full:true},
+    {keys:['UBICACION','UBICACIÓN','LUGAR'],label:'Ubicación',link:true},
+    {keys:['FECHAS','FECHA'],label:'Fechas'},
+    {keys:['MONTAJE'],label:'Montaje'},
+    {keys:['DESMONTAJE'],label:'Desmontaje'},
+    {keys:['ESCENARIOS'],label:'Escenarios',escenarios:true},
   ];
 
-  let html=`<div class="sec-title">Info</div>
-    <div class="sec-sub">Datos generales del evento · configuran el resto de secciones</div>
-    <div class="info-grid">`;
+  let html=`<div class="sec-title">Info</div><div class="info-grid" style="margin-top:16px">`;
 
-  fieldMap.forEach(({keys,label,accent})=>{
+  fieldMap.forEach(({keys,label,accent,link,escenarios,full})=>{
     const val=getInfo(keys);
-    html+=`<div class="info-card">
-      <div class="info-label">${esc(label)}</div>
-      <div class="info-value ${accent?'accent':''}">${esc(val)}</div>
-    </div>`;
-  });
-
-  // Campos extra que no estén en el mapa
-  const mappedKeys=fieldMap.flatMap(f=>f.keys.map(k=>k.toUpperCase()));
-  allKeys.forEach(k=>{
-    if(!mappedKeys.some(mk=>k.toUpperCase().includes(mk)||mk.includes(k.toUpperCase())))return;
+    let content='';
+    if(escenarios){
+      content=`<div class="info-label">${esc(label)}</div>${renderEscenarios(val)}`;
+    } else if(link){
+      content=`<div class="info-label">${esc(label)}</div><div class="info-value">${makeLink(val)}</div>`;
+    } else {
+      content=`<div class="info-label">${esc(label)}</div><div class="info-value ${accent?'accent':''}">${esc(val)}</div>`;
+    }
+    html+=`<div class="info-card ${full?'style="grid-column:1/-1"':''}">${content}</div>`;
   });
 
   html+=`</div>`;
 
-  // Resumen estructura
-  const nEsc=projectData.escenarios.length||1;
+  // Stats
   const nBandas=projectData.numBandas||projectData.monitores?.length||0;
-  html+=`<div class="sec-sub" style="margin-top:20px;margin-bottom:12px">Estructura detectada</div>
-    <div class="info-grid">
-      <div class="info-card">
-        <div class="info-label">Escenarios</div>
-        <div class="info-value accent">${nEsc}</div>
-        <div style="font-size:11px;color:var(--tx3);margin-top:6px;line-height:1.6">${projectData.escenarios.map(e=>esc(e)).join('<br>')||'—'}</div>
-      </div>
-      <div class="info-card"><div class="info-label">Bandas</div><div class="info-value accent">${nBandas}</div></div>
-      <div class="info-card"><div class="info-label">Actuaciones</div><div class="info-value">${projectData.horarios?.length||0}</div></div>
-      <div class="info-card"><div class="info-label">Sheet</div><div class="info-value" style="font-size:13px;word-break:break-all">${esc(currentProject.sheets[0]?.name||'—')}</div></div>
-    </div>`;
+  const nActs=projectData.horarios?.length||0;
+  html+=`<div class="info-grid" style="margin-top:16px">
+    <div class="info-card"><div class="info-label">Bandas</div><div class="info-value accent">${nBandas}</div></div>
+    <div class="info-card"><div class="info-label">Actuaciones</div><div class="info-value">${nActs}</div></div>
+  </div>`;
 
   return html;
 }
@@ -994,67 +1015,133 @@ function renderHorarios(){
 }
 
 /* ── OVERALL (bandas en columnas) ── */
+const OVERALL_SECTIONS={
+  'SOUND':      {label:'Sound',     color:'#4f8ef7'},
+  'SONIDO':     {label:'Sound',     color:'#4f8ef7'},
+  'LIGHTNING':  {label:'Lightning', color:'#f6c046'},
+  'ILUMINACION':{label:'Lightning', color:'#f6c046'},
+  'VIDEO':      {label:'Video',     color:'#e26ba6'},
+  'OTHERS':     {label:'Others',    color:'#8890a4'},
+  'OTROS':      {label:'Others',    color:'#8890a4'},
+};
+
 function renderOverall(){
   const ov=projectData.overall;
   if(!ov||!ov.bandas.length)return emptyMsg('Overall','Añade datos a la hoja OVERALL.','grid');
 
-  // Categorías que son secciones (separadores)
-  const sectionCats=['SONIDO','ILUMINACION','VIDEO','OTROS'];
-
-  let head='<tr><th class="cat-col">&nbsp;</th>';
-  ov.bandas.forEach(b=>{head+=`<th class="band-head">${esc(b)}</th>`;});
-  head+='</tr>';
+  const head=`<tr>
+    <th class="cat-col" style="min-width:160px;position:sticky;left:0;z-index:2">&nbsp;</th>
+    ${ov.bandas.map(b=>`<th class="band-head" style="min-width:140px">${esc(b)}</th>`).join('')}
+  </tr>`;
 
   let body='';
   ov.rows.forEach(row=>{
-    if(!row.cat)return;
-    const isSection=sectionCats.some(s=>row.cat.toUpperCase()===s);
-    const catClass=isSection?'cat section-cat':'cat';
-    body+=`<tr><td class="${catClass}">${esc(row.cat)}</td>`;
-    row.vals.forEach(v=>{
-      body+=`<td>${v?esc(v):'<span style="color:var(--tx3)">·</span>'}</td>`;
-    });
-    body+='</tr>';
+    if(!row.cat&&row.vals.every(v=>!v))return;
+    const catUp=(row.cat||'').toUpperCase().trim();
+    const sec=OVERALL_SECTIONS[catUp];
+    if(sec){
+      body+=`<tr><td colspan="${1+ov.bandas.length}" style="padding:8px 14px;background:${sec.color}18;color:${sec.color};font-weight:700;font-size:11px;letter-spacing:.1em;text-transform:uppercase;border-top:2px solid ${sec.color}55;position:sticky;left:0">
+        ${esc(sec.label)}</td></tr>`;
+    } else {
+      body+=`<tr>
+        <td class="cat" style="position:sticky;left:0;background:var(--panel2)">${esc(row.cat)||'&nbsp;'}</td>
+        ${row.vals.map(v=>`<td>${v?esc(v):'<span style="color:var(--tx3)">·</span>'}</td>`).join('')}
+      </tr>`;
+    }
   });
 
   return `<div class="sec-title">Overall</div>
-    <div class="sec-sub">Vista técnica completa · ${ov.bandas.length} bandas</div>
+    <div class="sec-sub">Vista técnica · ${ov.bandas.length} banda${ov.bandas.length!==1?'s':''}</div>
     <div class="overall-wrap"><table class="overall-table"><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
 }
 
 /* ── SUMA (input list por banda, tabla completa) ── */
+const SBOX_COLORS={
+  'A':'#4f8ef7','B':'#4cc28a','C':'#f47b7b','D':'#f6c046','E':'#9b7be8','DIRECT':'#2a2a2a','DIRECTO':'#2a2a2a','DI':'#2a2a2a',
+};
+function sboxCell(v){
+  if(!v)return '<span style="color:var(--tx3)">·</span>';
+  const key=Object.keys(SBOX_COLORS).find(k=>v.toUpperCase().startsWith(k));
+  const col=key?SBOX_COLORS[key]:null;
+  if(col) return `<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-weight:700;background:${col};color:#fff;font-size:11px">${esc(v)}</span>`;
+  return esc(v);
+}
+
 function renderSuma(){
   const inputs=projectData.inputs;
-  if(!inputs||!inputs.length)return emptyMsg('Suma','Anade datos a la hoja SUMA (input list).','sum');
+  if(!inputs||!inputs.length)return emptyMsg('Suma','Añade datos a la hoja SUMA.','sum');
+
+  // Default: vista todas (activeBanda === -1)
+  const curBanda=activeBanda===undefined?-1:activeBanda;
 
   let tabs='<div class="bandas-tabs">';
+  tabs+=`<button class="banda-tab ${curBanda===-1?'on':''}" onclick="setBandaSuma(-1)">Todas</button>`;
   inputs.forEach((b,i)=>{
     const name=b.name||projectData.overall?.bandas[b.idx-1]||`Banda ${b.idx}`;
-    tabs+=`<button class="banda-tab ${i===activeBanda?'on':''}" onclick="setBandaSuma(${i})">${esc(name)}</button>`;
+    tabs+=`<button class="banda-tab ${i===curBanda?'on':''}" onclick="setBandaSuma(${i})">${esc(name)}</button>`;
   });
-  tabs+=`<button class="banda-tab ${activeBanda===-1?'on':''}" onclick="setBandaSuma(-1)">Todas</button>`;
   tabs+='</div>';
 
   let content='';
-  const toShow = activeBanda===-1 ? inputs.map((_,i)=>i) : [activeBanda];
-  toShow.forEach(bi=>{
-    const b=inputs[bi]; if(!b)return;
+
+  if(curBanda===-1){
+    // Vista horizontal: todas las bandas en columnas
+    // Encontrar max canales
+    const maxCh=Math.max(...inputs.map(b=>b.channels.length));
+    const cols=['CH','INST','MIC','STANDS','S.BOX','INFO'];
+
+    let head=`<tr>`;
+    inputs.forEach((b,i)=>{
+      const name=b.name||projectData.overall?.bandas[b.idx-1]||`Banda ${b.idx}`;
+      const col=STAGE_COLORS[i%STAGE_COLORS.length];
+      head+=`<th colspan="${cols.length}" style="background:${col}22;color:${col};border-bottom:2px solid ${col};text-align:center">${esc(name)}</th>`;
+    });
+    head+=`</tr><tr>`;
+    inputs.forEach(()=>{
+      cols.forEach(col=>{ head+=`<th style="font-size:10px;white-space:nowrap">${esc(col)}</th>`; });
+    });
+    head+=`</tr>`;
+
+    let body='';
+    for(let ri=0;ri<maxCh;ri++){
+      body+=`<tr>`;
+      inputs.forEach(b=>{
+        const ch=b.channels[ri];
+        if(ch){
+          body+=`<td class="ch">${esc(ch.ch)}</td>`;
+          body+=`<td class="inst" style="white-space:nowrap">${esc(ch.inst)||'·'}</td>`;
+          body+=`<td style="white-space:nowrap">${esc(ch.mic)||'·'}</td>`;
+          body+=`<td>${esc(ch.stands)||'·'}</td>`;
+          body+=`<td>${sboxCell(ch.sbox)}</td>`;
+          body+=`<td style="color:var(--tx2);font-family:inherit;font-size:11px">${esc(ch.info)||''}</td>`;
+        } else {
+          body+=`<td colspan="${cols.length}" style="color:var(--tx3)"></td>`;
+        }
+      });
+      body+=`</tr>`;
+    }
+
+    content=`<div style="overflow-x:auto"><table class="io-table" style="min-width:max-content"><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
+
+  } else {
+    // Vista individual
+    const b=inputs[curBanda];
+    if(!b)return tabs+emptyMsg('','Banda no encontrada.','file');
     const name=b.name||projectData.overall?.bandas[b.idx-1]||`Banda ${b.idx}`;
-    content+=`<div class="io-block">
+    content=`<div class="io-block">
       <div class="io-head"><div class="io-name">${esc(name)}</div><div class="io-meta">${b.channels.length} canales</div></div>
       <table class="io-table">
         <thead><tr><th style="width:36px">CH</th><th>Instrumento</th><th>Micro / DI</th><th>Stand</th><th>S.Box</th><th>Info</th></tr></thead>
         <tbody>${b.channels.map(ch=>`<tr>
           <td class="ch">${esc(ch.ch)}</td>
-          <td class="inst">${esc(ch.inst)||'<span style="color:var(--tx3)">·</span>'}</td>
-          <td>${esc(ch.mic)||'<span style="color:var(--tx3)">·</span>'}</td>
-          <td>${esc(ch.stands)||'<span style="color:var(--tx3)">·</span>'}</td>
-          <td>${esc(ch.sbox)||'<span style="color:var(--tx3)">·</span>'}</td>
-          <td style="font-family:inherit;color:var(--tx2)">${esc(ch.info)}</td>
+          <td class="inst">${esc(ch.inst)||'·'}</td>
+          <td>${esc(ch.mic)||'·'}</td>
+          <td>${esc(ch.stands)||'·'}</td>
+          <td>${sboxCell(ch.sbox)}</td>
+          <td style="color:var(--tx2);font-family:inherit">${esc(ch.info)}</td>
         </tr>`).join('')}</tbody>
-      </table>
-    </div>`;
-  });
+      </table></div>`;
+  }
 
   const totalCh=inputs.reduce((s,b)=>s+b.channels.length,0);
   return `<div class="sec-title">Suma · Input List</div>
@@ -1066,37 +1153,75 @@ function setBandaSuma(i){activeBanda=i;showSection('suma');}
 /* ── MONITORES (output list por banda) ── */
 function renderMonitores(){
   const mons=projectData.monitores;
-  if(!mons||!mons.length)return emptyMsg('Monitores','Anade datos a la hoja MONITORES.','file');
+  if(!mons||!mons.length)return emptyMsg('Monitores','Añade datos a la hoja MONITORES.','file');
+
+  const curBanda=activeBanda===undefined?-1:activeBanda;
 
   let tabs='<div class="bandas-tabs">';
+  tabs+=`<button class="banda-tab ${curBanda===-1?'on':''}" onclick="setBandaMon(-1)">Todas</button>`;
   mons.forEach((m,i)=>{
-    const name=projectData.overall?.bandas[m.idx-1]||`Banda ${m.idx}`;
-    tabs+=`<button class="banda-tab ${i===activeBanda?'on':''}" onclick="setBandaMon(${i})">${esc(name)}</button>`;
+    const name=m.name||projectData.overall?.bandas[m.idx-1]||`Banda ${m.idx}`;
+    tabs+=`<button class="banda-tab ${i===curBanda?'on':''}" onclick="setBandaMon(${i})">${esc(name)}</button>`;
   });
-  tabs+=`<button class="banda-tab ${activeBanda===-1?'on':''}" onclick="setBandaMon(-1)">Todas</button>`;
   tabs+='</div>';
 
   let content='';
-  const toShow=activeBanda===-1?mons.map((_,i)=>i):[activeBanda];
-  toShow.forEach(bi=>{
-    const m=mons[bi];if(!m)return;
-    const name=projectData.overall?.bandas[m.idx-1]||`Banda ${m.idx}`;
-    content+=`<div class="io-block">
+
+  if(curBanda===-1){
+    // Vista horizontal: todas las bandas
+    const maxOut=Math.max(...mons.map(m=>m.outs.length));
+    const cols=['OUT','PATCH','MONITOR','NOTAS'];
+
+    let head=`<tr>`;
+    mons.forEach((m,i)=>{
+      const name=m.name||projectData.overall?.bandas[m.idx-1]||`Banda ${m.idx}`;
+      const col=STAGE_COLORS[i%STAGE_COLORS.length];
+      head+=`<th colspan="${cols.length}" style="background:${col}22;color:${col};border-bottom:2px solid ${col};text-align:center">${esc(name)}</th>`;
+    });
+    head+=`</tr><tr>`;
+    mons.forEach(()=>{
+      cols.forEach(col=>{ head+=`<th style="font-size:10px;white-space:nowrap">${esc(col)}</th>`; });
+    });
+    head+=`</tr>`;
+
+    let body='';
+    for(let ri=0;ri<maxOut;ri++){
+      body+=`<tr>`;
+      mons.forEach(m=>{
+        const o=m.outs[ri];
+        if(o){
+          body+=`<td class="ch">${esc(o.out)}</td>`;
+          body+=`<td style="white-space:nowrap">${esc(o.patch)||'·'}</td>`;
+          body+=`<td class="inst" style="white-space:nowrap">${esc(o.monitor)||'·'}</td>`;
+          body+=`<td style="color:var(--tx2);font-size:11px;font-family:inherit">${esc(o.notas)||''}</td>`;
+        } else {
+          body+=`<td colspan="${cols.length}"></td>`;
+        }
+      });
+      body+=`</tr>`;
+    }
+
+    content=`<div style="overflow-x:auto"><table class="io-table" style="min-width:max-content"><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
+
+  } else {
+    const m=mons[curBanda];
+    if(!m)return tabs+emptyMsg('','Banda no encontrada.','file');
+    const name=m.name||projectData.overall?.bandas[m.idx-1]||`Banda ${m.idx}`;
+    content=`<div class="io-block">
       <div class="io-head"><div class="io-name">${esc(name)}</div><div class="io-meta">${m.outs.length} salidas</div></div>
       <table class="io-table">
         <thead><tr><th style="width:36px">Out</th><th>Patch</th><th>Monitor</th><th>Notas</th></tr></thead>
         <tbody>${m.outs.map(o=>`<tr>
           <td class="ch">${esc(o.out)}</td>
-          <td>${esc(o.patch)||'<span style="color:var(--tx3)">·</span>'}</td>
-          <td class="inst">${esc(o.monitor)||'<span style="color:var(--tx3)">·</span>'}</td>
-          <td style="font-family:inherit;color:var(--tx2)">${esc(o.notas)}</td>
+          <td>${esc(o.patch)||'·'}</td>
+          <td class="inst">${esc(o.monitor)||'·'}</td>
+          <td style="color:var(--tx2);font-family:inherit">${esc(o.notas)}</td>
         </tr>`).join('')}</tbody>
-      </table>
-    </div>`;
-  });
+      </table></div>`;
+  }
 
   return `<div class="sec-title">Monitores</div>
-    <div class="sec-sub">Output list por banda</div>
+    <div class="sec-sub">Output list · ${mons.length} banda${mons.length!==1?'s':''}</div>
     ${tabs}${content}`;
 }
 function setBandaMon(i){activeBanda=i;showSection('monitores');}
