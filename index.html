@@ -459,6 +459,19 @@ async function syncProject(){
       try{ data.raw[tab]=await sheetsGet(id,`${tab}!A1:BZ200`); }catch(e){ data.raw[tab]=[]; }
     }
     projectData=parseProject(data);
+    // DEBUG: mostrar datos crudos en consola
+    console.log('=== CLEANSHEET DEBUG ===');
+    console.log('TABS:', data.tabs);
+    console.log('INFO raw:', data.raw[data.tabs.find(t=>/INFO/i.test(t))||'']?.slice(0,5));
+    console.log('HORARIOS raw:', data.raw[data.tabs.find(t=>/HORARIOS/i.test(t))||'']?.slice(0,3));
+    console.log('SUMA raw header:', data.raw[data.tabs.find(t=>/SUMA/i.test(t))||'']?.[0]);
+    console.log('MONITORES raw header:', data.raw[data.tabs.find(t=>/MONITORES/i.test(t))||'']?.[0]);
+    console.log('OVERALL raw header:', data.raw[data.tabs.find(t=>/OVERALL/i.test(t))||'']?.[0]);
+    console.log('parsed info:', projectData.info);
+    console.log('parsed horarios count:', projectData.horarios?.length);
+    console.log('parsed inputs:', projectData.inputs?.length, 'bandas');
+    console.log('parsed monitores:', projectData.monitores?.length, 'bandas');
+    console.log('escenarios:', projectData.escenarios);
     renderSidebar();
     document.getElementById('sidebar').classList.remove('hidden');
     showView('view-event');
