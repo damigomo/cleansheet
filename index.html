@@ -299,7 +299,7 @@ const SECTIONS=[
   {id:'horarios', label:'Horarios', icon:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>'},
   {id:'overall',  label:'Overall',  icon:'<svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>'},
   {id:'suma',     label:'Suma',     icon:'<svg viewBox="0 0 24 24"><path d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9"/></svg>'},
-  {id:'iolist',   label:'IO List',  icon:'<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>'},
+  {id:'monitores',label:'Monitores',icon:'<svg viewBox="0 0 24 24"><path d="M3 18v-6a9 9 0 0118 0v6"/><path d="M21 19a2 2 0 01-2 2h-1a2 2 0 01-2-2v-3a2 2 0 012-2h3zM3 19a2 2 0 002 2h1a2 2 0 002-2v-3a2 2 0 00-2-2H3z"/></svg>'},
   {id:'personal', label:'Personal', icon:'<svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>'},
 ];
 
@@ -345,14 +345,28 @@ window.addEventListener('load',()=>{
     callback:async r=>{
       if(r.error){showView('view-login');return;}
       accessToken=r.access_token;
+      // Guardar token con caducidad (~55 min)
+      try{
+        localStorage.setItem('cs_token',accessToken);
+        localStorage.setItem('cs_token_exp',String(Date.now()+55*60*1000));
+      }catch(e){}
       updateAuthUI();
       await loadProjects();
     }
   });
-  showView('view-login');
+  // Intentar reusar token guardado
+  let savedToken=null,savedExp=0;
+  try{savedToken=localStorage.getItem('cs_token');savedExp=parseInt(localStorage.getItem('cs_token_exp')||'0');}catch(e){}
+  if(savedToken&&Date.now()<savedExp){
+    accessToken=savedToken;
+    updateAuthUI();
+    loadProjects();
+  } else {
+    showView('view-login');
+  }
 });
 function signIn(){tokenClient.requestAccessToken({prompt:'select_account consent'});}
-function signOut(){google.accounts.oauth2.revoke(accessToken);accessToken=null;document.getElementById('sidebar').classList.add('hidden');showView('view-login');updateAuthUI();document.getElementById('breadcrumb').innerHTML='<span style="color:var(--tx3)">Proyectos activos</span>';}
+function signOut(){google.accounts.oauth2.revoke(accessToken);accessToken=null;try{localStorage.removeItem('cs_token');localStorage.removeItem('cs_token_exp');}catch(e){}document.getElementById('sidebar').classList.add('hidden');showView('view-login');updateAuthUI();document.getElementById('breadcrumb').innerHTML='<span style="color:var(--tx3)">Proyectos activos</span>';}
 function updateAuthUI(){
   document.getElementById('auth-area').innerHTML=accessToken
     ?`<div class="user-pill"><div class="user-dot"></div><span>Conectado</span></div><button class="tbtn" onclick="signOut()">Salir</button>`
@@ -363,8 +377,14 @@ function updateAuthUI(){
 async function sheetsGet(id,range){
   const url=`https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(range)}`;
   const r=await fetch(url,{headers:{Authorization:`Bearer ${accessToken}`}});
+  if(r.status===401){handleAuthExpired();throw new Error('Sesion expirada');}
   if(!r.ok)throw new Error('Sheets '+r.status);
   return (await r.json()).values||[];
+}
+function handleAuthExpired(){
+  accessToken=null;
+  try{localStorage.removeItem('cs_token');localStorage.removeItem('cs_token_exp');}catch(e){}
+  showView('view-login');
 }
 async function sheetMeta(id){
   const url=`https://sheets.googleapis.com/v4/spreadsheets/${id}?fields=sheets.properties.title`;
@@ -483,36 +503,32 @@ function parseProject(data){
     }
   }
 
-  // HORARIOS
+  // HORARIOS — parsing posicional
   const horTab=findTab(tabs,['HORARIOS','HORARIO']);
   if(horTab&&raw[horTab]){
-    const rows=raw[horTab];
-    const header=rows[0]||[];
-    // Detectar columnas
-    P.horarios=rows.slice(1).filter(r=>r.some(c=>c&&c.trim())).map(r=>{
-      const o={};header.forEach((h,i)=>{o[(h||'').trim().toUpperCase()]=(r[i]||'').trim();});
-      return o;
-    });
-    P.horHeader=header.map(h=>(h||'').trim());
-  }
-  if(!P.escenarios.length){
-    // inferir de horarios
-    const set=new Set();
-    P.horarios.forEach(h=>{
-      Object.keys(h).forEach(k=>{ if(k.includes('ESCENARIO')&&h[k])set.add(h[k]); });
-    });
+    const rows=raw[horTab].filter(r=>r&&r.some(c=>c&&c.toString().trim()));
+    if(rows.length){
+      const header=(rows[0]||[]).map(h=>(h||'').toString().trim());
+      P.horHeader=header;
+      P.horarios=rows.slice(1).map(r=>header.map((_,i)=>(r[i]||'').toString().trim()));
+      P.horEscCols=header.map((h,i)=>({h,i})).filter(c=>/ESCENARIO/i.test(c.h)).map(c=>c.i);
+    }
   }
 
-  // OVERALL
+  // OVERALL — mantener todas las filas para grid completo
   const ovTab=findTab(tabs,['OVERALL']);
   if(ovTab&&raw[ovTab]){
-    const rows=raw[ovTab].filter(r=>r.some(c=>c&&c.trim()));
-    if(rows.length){
-      const head=rows[0];
-      const bandas=head.slice(1).map(b=>(b||'').trim()).filter(Boolean);
-      P.numBandas=Math.max(P.numBandas,bandas.length);
-      P.overall={bandas,rows:rows.slice(1).map(r=>({cat:(r[0]||'').trim(),vals:r.slice(1,1+bandas.length).map(v=>(v||'').trim())}))};
-    }
+    const allRows=raw[ovTab]||[];
+    // Buscar fila cabecera: la que tiene "BANDA" en alguna celda (no la primera col)
+    let headIdx=allRows.findIndex(r=>r&&r.slice(1).some(c=>/BANDA/i.test(c||'')));
+    if(headIdx<0)headIdx=0;
+    const head=allRows[headIdx]||[];
+    const bandas=head.slice(1).map(b=>(b||'').trim()).filter(Boolean);
+    P.numBandas=Math.max(P.numBandas,bandas.length);
+    const dataRows=allRows.slice(headIdx+1)
+      .map(r=>({cat:(r[0]||'').trim(),vals:bandas.map((_,bi)=>(r[bi+1]||'').trim())}))
+      .filter(row=>row.cat); // mantener filas con categoria aunque valores vacios
+    P.overall={bandas,rows:dataRows};
   }
 
   // INPUT LIST / SUMA
@@ -541,7 +557,12 @@ function parseProject(data){
 /* INPUT LIST: cabeceras tipo "BANDA 1/INFO/SOUND CHECK/SHOW/IN" */
 function parseInputList(rows){
   if(!rows||!rows.length)return [];
-  const header=rows[0]||[];
+  // Buscar fila cabecera: la que contiene "BANDA N" con segmento IN/INST/MIC
+  let hIdx=rows.findIndex(r=>r&&r.some(c=>/BANDA\s*\d+/i.test(c||'')&&/\/(IN|INST|MIC)\b/i.test(c||'')));
+  if(hIdx<0)hIdx=rows.findIndex(r=>r&&r.some(c=>/BANDA\s*\d+/i.test(c||'')));
+  if(hIdx<0)return [];
+  const header=rows[hIdx]||[];
+  const dataStart=hIdx+1;
   // Detectar grupos de banda por prefijo "BANDA N"
   const bandCols={}; // bandIdx -> {field->colIndex}
   header.forEach((h,i)=>{
@@ -561,7 +582,7 @@ function parseInputList(rows){
     const cols=bandCols[idx];
     const inField=cols['IN']!==undefined?cols['IN']:Object.values(cols)[0];
     const channels=[];
-    for(let r=1;r<rows.length;r++){
+    for(let r=dataStart;r<rows.length;r++){
       const row=rows[r];if(!row)continue;
       const ch=row[inField];
       const inst=cols['INST']!==undefined?(row[cols['INST']]||'').trim():'';
@@ -581,7 +602,11 @@ function parseInputList(rows){
 /* MONITORES: cabeceras "BANDA 1/OUT", "BANDA 1/PATCH"... */
 function parseMonitores(rows){
   if(!rows||!rows.length)return [];
-  const header=rows[0]||[];
+  let hIdx=rows.findIndex(r=>r&&r.some(c=>/BANDA\s*\d+/i.test(c||'')&&/\/(OUT|PATCH|MONITOR)\b/i.test(c||'')));
+  if(hIdx<0)hIdx=rows.findIndex(r=>r&&r.some(c=>/BANDA\s*\d+/i.test(c||'')));
+  if(hIdx<0)return [];
+  const header=rows[hIdx]||[];
+  const dataStart=hIdx+1;
   const bandCols={};
   header.forEach((h,i)=>{
     if(!h)return;
@@ -599,7 +624,7 @@ function parseMonitores(rows){
     const cols=bandCols[idx];
     const outField=cols['OUT']!==undefined?cols['OUT']:Object.values(cols)[0];
     const outs=[];
-    for(let r=1;r<rows.length;r++){
+    for(let r=dataStart;r<rows.length;r++){
       const row=rows[r];if(!row)continue;
       const out=row[outField];
       const patch=cols['PATCH']!==undefined?(row[cols['PATCH']]||'').trim():'';
@@ -665,7 +690,7 @@ function showSection(sec){
   else if(sec==='horarios')c.innerHTML=renderHorarios();
   else if(sec==='overall')c.innerHTML=renderOverall();
   else if(sec==='suma')c.innerHTML=renderSuma();
-  else if(sec==='iolist')c.innerHTML=renderIOList();
+  else if(sec==='monitores')c.innerHTML=renderMonitores();
   else if(sec==='personal')c.innerHTML=renderPersonal();
 }
 
@@ -719,55 +744,59 @@ function renderInfo(){
 /* ── HORARIOS ── */
 function renderHorarios(){
   const rows=projectData.horarios;
-  if(!rows.length)return emptyMsg('Horarios','Añade datos a la hoja HORARIOS.','clock');
+  if(!rows||!rows.length)return emptyMsg('Horarios','Anade datos a la hoja HORARIOS.','clock');
   const header=projectData.horHeader||[];
-
-  // Detectar columnas de escenario y tiempos
-  const escCols=header.map((h,i)=>({h:(h||'').trim(),i})).filter(c=>/ESCENARIO/i.test(c.h));
-  const timeCols=header.map((h,i)=>({h:(h||'').trim(),i})).filter(c=>!/ESCENARIO/i.test(c.h)&&c.h);
+  const escCols=projectData.horEscCols||[];
 
   const legend=`<div class="h-legend">
-    ${[['var(--loadin)','Load In'],['var(--sc)','Soundcheck'],['var(--lc)','Linecheck'],['var(--cambio)','Changeover'],['var(--show)','Show']]
+    ${[['var(--loadin)','Load In'],['var(--offstage)','Set Up'],['var(--sc)','Soundcheck'],['var(--lc)','Changeover/Linecheck'],['var(--show)','Show']]
       .map(([c,t])=>`<div class="h-li"><div class="h-dot" style="background:${c}"></div>${t}</div>`).join('')}
   </div>`;
 
-  // Construir tabla respetando estructura original
+  // Cabecera: todas las columnas con nombre
   let head='<tr>';
-  header.forEach(h=>{ if((h||'').trim())head+=`<th>${esc(h)}</th>`; });
+  header.forEach((h,i)=>{ if(h)head+=`<th>${esc(h)}</th>`; });
   head+='</tr>';
+
+  // Determinar columna del escenario activo para filtrar
+  let filterColIdx=-1;
+  if(activeStage!=='all'){
+    const escIdx=projectData.escenarios.indexOf(activeStage);
+    if(escIdx>=0&&escCols[escIdx]!==undefined)filterColIdx=escCols[escIdx];
+  }
 
   let body='';
   rows.forEach(r=>{
-    // filtro escenario
-    if(activeStage!=='all'){
-      const inStage=escCols.some(c=>r[(header[c.i]||'').trim().toUpperCase()]===activeStage || r[(header[c.i]||'').trim().toUpperCase()]);
-      // si la fila tiene banda en la columna del escenario activo
-      const escIdx=projectData.escenarios.indexOf(activeStage);
-      if(escIdx>=0&&escCols[escIdx]){
-        const key=(header[escCols[escIdx].i]||'').trim().toUpperCase();
-        if(!r[key])return;
-      }
-    }
+    // Saltar filas totalmente vacias
+    if(!r.some(c=>c&&c.trim()))return;
+    // Filtro por escenario: la fila debe tener algo en la columna de ese escenario
+    if(filterColIdx>=0 && !(r[filterColIdx]&&r[filterColIdx].trim()))return;
+
     body+='<tr>';
     header.forEach((h,i)=>{
-      if(!(h||'').trim())return;
-      const key=(h||'').trim().toUpperCase();
-      let val=r[key]||'';
-      const hUp=key;
-      let cls='',style='';
-      if(/SHOW\s*TIME/i.test(h)||hUp==='SHOW TIME')style='color:var(--show);font-weight:700';
-      else if(/SOUNDCHECK/i.test(h))style='color:var(--sc)';
-      else if(/LINECHECK|CHANGE/i.test(h))style='color:var(--lc)';
+      if(!h)return;
+      let val=(r[i]||'').trim();
+      let style='';
+      if(/SHOW\s*TIME/i.test(h))style='color:var(--show);font-weight:700';
+      else if(/SOUNDCHECK/i.test(h))style='color:var(--sc);font-weight:600';
+      else if(/CHANGE|LINECHECK/i.test(h))style='color:var(--lc)';
       else if(/LOAD/i.test(h))style='color:var(--loadin)';
-      // celda de banda (escenario)
-      if(/ESCENARIO/i.test(h)&&val){
-        const escIdx=escCols.findIndex(c=>c.i===i);
-        const col=STAGE_COLORS[escIdx%STAGE_COLORS.length];
-        body+=`<td class="artist-cell"><span class="stage-pill" style="background:${col}22;color:${col}">${esc(val)}</span></td>`;
+      else if(/SET\s*UP/i.test(h))style='color:var(--offstage)';
+      else if(/TIME/i.test(h))style='color:var(--tx3);font-size:11px';
+
+      // Celda de escenario con banda
+      const escPos=escCols.indexOf(i);
+      if(escPos>=0){
+        if(val){
+          const col=STAGE_COLORS[escPos%STAGE_COLORS.length];
+          body+=`<td class="artist-cell"><span class="stage-pill" style="background:${col}22;color:${col}">${esc(val)}</span></td>`;
+        } else {
+          body+=`<td class="hz-empty">·</td>`;
+        }
         return;
       }
-      if(val==='-'||val==='\\-'){body+=`<td class="hz-empty">·</td>`;return;}
-      body+=`<td style="${style}">${esc(val)||'<span class="hz-empty">·</span>'}</td>`;
+      if(!val||val==='-'||val==='\\-'){body+=`<td class="hz-empty">·</td>`;return;}
+      body+=`<td style="${style}">${esc(val)}</td>`;
     });
     body+='</tr>';
   });
@@ -807,104 +836,84 @@ function renderOverall(){
     <div class="overall-wrap"><table class="overall-table"><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
 }
 
-/* ── SUMA ── */
+/* ── SUMA (input list por banda, tabla completa) ── */
 function renderSuma(){
   const inputs=projectData.inputs;
-  if(!inputs||!inputs.length)return emptyMsg('Suma','Añade datos a la hoja INPUT LIST.','sum');
+  if(!inputs||!inputs.length)return emptyMsg('Suma','Anade datos a la hoja SUMA (input list).','sum');
 
-  let totalsHtml='<div class="suma-totals">';
-  inputs.forEach(b=>{
-    const mics={},stands={};
-    b.channels.forEach(c=>{
-      if(c.mic){mics[c.mic]=(mics[c.mic]||0)+1;}
-      if(c.stands){stands[c.stands]=(stands[c.stands]||0)+1;}
-    });
-    const bandName=projectData.overall?.bandas[b.idx-1]||`Banda ${b.idx}`;
-    totalsHtml+=`<div class="suma-card">
-      <div class="suma-card-band">${esc(bandName)}</div>
-      <div class="suma-card-row"><span>Canales</span><span>${b.channels.length}</span></div>
-      ${Object.entries(mics).map(([m,n])=>`<div class="suma-card-row"><span>${esc(m)}</span><span>${n}</span></div>`).join('')}
-      ${Object.entries(stands).map(([s,n])=>`<div class="suma-card-row"><span>Stand ${esc(s)}</span><span>${n}</span></div>`).join('')}
-    </div>`;
-  });
-  totalsHtml+='</div>';
-
-  // Suma global de micros
-  const globalMics={},globalStands={};
-  inputs.forEach(b=>b.channels.forEach(c=>{
-    if(c.mic){globalMics[c.mic]=(globalMics[c.mic]||0)+1;}
-    if(c.stands){globalStands[c.stands]=(globalStands[c.stands]||0)+1;}
-  }));
-  const totalCh=inputs.reduce((s,b)=>s+b.channels.length,0);
-
-  let globalHtml=`<div class="io-block">
-    <div class="io-head"><div class="io-name">Totales del festival</div><div class="io-meta">${totalCh} canales · ${inputs.length} bandas</div></div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0">
-      <div><div class="io-divider">Micrófonos / DI</div><table class="io-table"><tbody>
-        ${Object.entries(globalMics).sort((a,b)=>b[1]-a[1]).map(([m,n])=>`<tr><td class="inst">${esc(m)}</td><td class="infra" style="text-align:right">${n}</td></tr>`).join('')||'<tr><td class="inst" style="color:var(--tx3)">Sin datos de micros</td><td></td></tr>'}
-      </tbody></table></div>
-      <div><div class="io-divider">Stands</div><table class="io-table"><tbody>
-        ${Object.entries(globalStands).sort((a,b)=>b[1]-a[1]).map(([s,n])=>`<tr><td class="inst">${esc(s)}</td><td class="infra" style="text-align:right">${n}</td></tr>`).join('')||'<tr><td class="inst" style="color:var(--tx3)">Sin datos de stands</td><td></td></tr>'}
-      </tbody></table></div>
-    </div>
-  </div>`;
-
-  return `<div class="sec-title">Suma</div>
-    <div class="sec-sub">Totales de input list y stands por banda</div>
-    ${globalHtml}${totalsHtml}`;
-}
-
-/* ── IO LIST (ficha por banda) ── */
-function renderIOList(){
-  const inputs=projectData.inputs;
-  if(!inputs||!inputs.length)return emptyMsg('IO List','Añade datos a la hoja INPUT LIST.','file');
-
-  // Tabs de banda
   let tabs='<div class="bandas-tabs">';
   inputs.forEach((b,i)=>{
     const name=projectData.overall?.bandas[b.idx-1]||`Banda ${b.idx}`;
-    tabs+=`<button class="banda-tab ${i===activeBanda?'on':''}" onclick="setBanda(${i})">${esc(name)}</button>`;
+    tabs+=`<button class="banda-tab ${i===activeBanda?'on':''}" onclick="setBandaSuma(${i})">${esc(name)}</button>`;
   });
+  tabs+=`<button class="banda-tab ${activeBanda===-1?'on':''}" onclick="setBandaSuma(-1)">Todas</button>`;
   tabs+='</div>';
 
-  const b=inputs[activeBanda]||inputs[0];
-  const bandName=projectData.overall?.bandas[b.idx-1]||`Banda ${b.idx}`;
-  const mon=(projectData.monitores||[]).find(m=>m.idx===b.idx);
+  let content='';
+  const toShow = activeBanda===-1 ? inputs.map((_,i)=>i) : [activeBanda];
+  toShow.forEach(bi=>{
+    const b=inputs[bi]; if(!b)return;
+    const name=projectData.overall?.bandas[b.idx-1]||`Banda ${b.idx}`;
+    content+=`<div class="io-block">
+      <div class="io-head"><div class="io-name">${esc(name)}</div><div class="io-meta">${b.channels.length} canales</div></div>
+      <table class="io-table">
+        <thead><tr><th style="width:36px">CH</th><th>Instrumento</th><th>Micro / DI</th><th>Stand</th><th>S.Box</th><th>Info</th></tr></thead>
+        <tbody>${b.channels.map(ch=>`<tr>
+          <td class="ch">${esc(ch.ch)}</td>
+          <td class="inst">${esc(ch.inst)||'<span style="color:var(--tx3)">·</span>'}</td>
+          <td>${esc(ch.mic)||'<span style="color:var(--tx3)">·</span>'}</td>
+          <td>${esc(ch.stands)||'<span style="color:var(--tx3)">·</span>'}</td>
+          <td>${esc(ch.sbox)||'<span style="color:var(--tx3)">·</span>'}</td>
+          <td style="font-family:inherit;color:var(--tx2)">${esc(ch.info)}</td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </div>`;
+  });
 
-  let inputHtml=`<div class="io-block">
-    <div class="io-head"><div class="io-name">${esc(bandName)}</div><div class="io-meta">${b.channels.length} canales</div></div>
-    <div class="io-divider">Input List</div>
-    <table class="io-table">
-      <thead><tr><th style="width:34px">CH</th><th>Instrumento</th><th>Micro / DI</th><th>Stand</th><th>S.Box</th><th>Info</th></tr></thead>
-      <tbody>${b.channels.map(c=>`<tr>
-        <td class="ch">${esc(c.ch)}</td>
-        <td class="inst">${esc(c.inst)||'<span style="color:var(--tx3)">·</span>'}</td>
-        <td>${esc(c.mic)||'<span style="color:var(--tx3)">·</span>'}</td>
-        <td>${esc(c.stands)||'<span style="color:var(--tx3)">·</span>'}</td>
-        <td>${esc(c.sbox)||'<span style="color:var(--tx3)">·</span>'}</td>
-        <td style="font-family:inherit;color:var(--tx2)">${esc(c.info)}</td>
-      </tr>`).join('')}</tbody>
-    </table>`;
-
-  if(mon&&mon.outs.length){
-    inputHtml+=`<div class="io-divider">Monitores · Output List</div>
-    <table class="io-table">
-      <thead><tr><th style="width:34px">Out</th><th>Patch</th><th>Monitor</th><th>Notas</th></tr></thead>
-      <tbody>${mon.outs.map(o=>`<tr>
-        <td class="ch">${esc(o.out)}</td>
-        <td>${esc(o.patch)||'<span style="color:var(--tx3)">·</span>'}</td>
-        <td class="inst">${esc(o.monitor)||'<span style="color:var(--tx3)">·</span>'}</td>
-        <td style="font-family:inherit;color:var(--tx2)">${esc(o.notas)}</td>
-      </tr>`).join('')}</tbody>
-    </table>`;
-  }
-  inputHtml+='</div>';
-
-  return `<div class="sec-title">IO List</div>
-    <div class="sec-sub">Ficha técnica por banda — input list y monitores</div>
-    ${tabs}${inputHtml}`;
+  const totalCh=inputs.reduce((s,b)=>s+b.channels.length,0);
+  return `<div class="sec-title">Suma · Input List</div>
+    <div class="sec-sub">${inputs.length} bandas · ${totalCh} canales totales</div>
+    ${tabs}${content}`;
 }
-function setBanda(i){activeBanda=i;showSection('iolist');}
+function setBandaSuma(i){activeBanda=i;showSection('suma');}
+
+/* ── MONITORES (output list por banda) ── */
+function renderMonitores(){
+  const mons=projectData.monitores;
+  if(!mons||!mons.length)return emptyMsg('Monitores','Anade datos a la hoja MONITORES.','file');
+
+  let tabs='<div class="bandas-tabs">';
+  mons.forEach((m,i)=>{
+    const name=projectData.overall?.bandas[m.idx-1]||`Banda ${m.idx}`;
+    tabs+=`<button class="banda-tab ${i===activeBanda?'on':''}" onclick="setBandaMon(${i})">${esc(name)}</button>`;
+  });
+  tabs+=`<button class="banda-tab ${activeBanda===-1?'on':''}" onclick="setBandaMon(-1)">Todas</button>`;
+  tabs+='</div>';
+
+  let content='';
+  const toShow=activeBanda===-1?mons.map((_,i)=>i):[activeBanda];
+  toShow.forEach(bi=>{
+    const m=mons[bi];if(!m)return;
+    const name=projectData.overall?.bandas[m.idx-1]||`Banda ${m.idx}`;
+    content+=`<div class="io-block">
+      <div class="io-head"><div class="io-name">${esc(name)}</div><div class="io-meta">${m.outs.length} salidas</div></div>
+      <table class="io-table">
+        <thead><tr><th style="width:36px">Out</th><th>Patch</th><th>Monitor</th><th>Notas</th></tr></thead>
+        <tbody>${m.outs.map(o=>`<tr>
+          <td class="ch">${esc(o.out)}</td>
+          <td>${esc(o.patch)||'<span style="color:var(--tx3)">·</span>'}</td>
+          <td class="inst">${esc(o.monitor)||'<span style="color:var(--tx3)">·</span>'}</td>
+          <td style="font-family:inherit;color:var(--tx2)">${esc(o.notas)}</td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </div>`;
+  });
+
+  return `<div class="sec-title">Monitores</div>
+    <div class="sec-sub">Output list por banda</div>
+    ${tabs}${content}`;
+}
+function setBandaMon(i){activeBanda=i;showSection('monitores');}
 
 /* ── PERSONAL ── */
 function renderPersonal(){
