@@ -186,19 +186,35 @@ body{display:flex;flex-direction:column;height:100vh;overflow:hidden}
 .section-divider{font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--tx3);padding:8px 12px;background:var(--panel3);border-bottom:1px solid var(--line);border-top:1px solid var(--line)}
 
 /* PERSONAL */
-.personal-wrap{padding:20px;overflow-y:auto;flex:1}
-.personal-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px;margin-top:16px}
-.dept-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--rl);overflow:hidden}
-.dept-header{padding:12px 16px;border-bottom:1px solid var(--line);background:var(--panel2)}
-.dept-name{font-size:13px;font-weight:700;letter-spacing:.04em;text-transform:uppercase}
-.dept-count{font-size:11px;color:var(--tx3);margin-top:2px;font-family:var(--mono)}
-.dept-body{padding:8px 0}
-.person-row{display:flex;align-items:center;gap:10px;padding:7px 16px}
-.person-avatar{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0}
-.person-info{flex:1}
-.person-name{font-size:13px;color:var(--tx);font-weight:500}
-.person-rol{font-size:11px;color:var(--tx3)}
-.person-turno{font-family:var(--mono);font-size:10px;color:var(--tx3);margin-left:auto}
+.personal-wrap{padding:24px;overflow-y:auto;flex:1}
+.personal-top{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:24px;gap:16px;flex-wrap:wrap}
+.personal-title{font-size:22px;font-weight:800;letter-spacing:-.03em;color:var(--tx)}
+.personal-sub{font-size:13px;color:var(--tx2);margin-top:4px}
+.personal-stats{display:flex;gap:10px;flex-shrink:0}
+.pstat{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:8px 16px;text-align:center}
+.pstat-val{font-size:20px;font-weight:700;color:var(--accent)}
+.pstat-label{font-size:10px;color:var(--tx3);letter-spacing:.06em;text-transform:uppercase;margin-top:2px}
+.personal-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px}
+.dept-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--rl);overflow:hidden;transition:border-color .15s}
+.dept-card:hover{border-color:var(--line2)}
+.dept-header{padding:14px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px}
+.dept-icon{width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.dept-icon svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:1.8}
+.dept-info{flex:1}
+.dept-name{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+.dept-count{font-size:11px;color:var(--tx3);margin-top:1px;font-family:var(--mono)}
+.dept-body{padding:6px 0}
+.person-row{display:flex;align-items:center;gap:12px;padding:8px 16px;transition:background .1s;cursor:default}
+.person-row:hover{background:var(--panel2)}
+.person-avatar{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;letter-spacing:.02em}
+.person-info{flex:1;min-width:0}
+.person-name{font-size:13px;color:var(--tx);font-weight:600}
+.person-rol{font-size:11px;color:var(--tx3);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.person-right{display:flex;flex-direction:column;align-items:flex-end;gap:3px;flex-shrink:0}
+.person-turno{font-family:var(--mono);font-size:10px;background:var(--panel3);border:1px solid var(--line2);border-radius:20px;padding:2px 7px;color:var(--tx2);white-space:nowrap}
+.person-escenario{font-size:10px;color:var(--tx3);font-family:var(--mono)}
+.dept-footer{padding:10px 16px;border-top:1px solid var(--line);background:var(--panel2)}
+.dept-footer-text{font-size:11px;color:var(--tx3)}
 
 /* PLACEHOLDER */
 .placeholder-section{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:40px;color:var(--tx3)}
@@ -830,38 +846,77 @@ function renderSuma(){
 }
 
 /* ── PERSONAL ── */
+const DEPT_ICONS = {
+  'SONIDO':      '<svg viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>',
+  'ILUMINACION': '<svg viewBox="0 0 24 24"><path d="M9 18h6M12 2v1M12 21v1M4.22 4.22l.77.77M19.01 4.22l-.77.77M2 12h1M21 12h1M4.22 19.78l.77-.77M19.01 19.78l-.77-.77"/><circle cx="12" cy="12" r="4"/></svg>',
+  'VIDEO':       '<svg viewBox="0 0 24 24"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>',
+  'PRODUCCION':  '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>',
+  'STAGE':       '<svg viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16"/></svg>',
+  'CATERING':    '<svg viewBox="0 0 24 24"><path d="M18 8h1a4 4 0 010 8h-1"/><path d="M2 8h16v9a4 4 0 01-4 4H6a4 4 0 01-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></svg>',
+};
+function getDeptIcon(area){
+  const key=Object.keys(DEPT_ICONS).find(k=>area.toUpperCase().includes(k));
+  return DEPT_ICONS[key]||'<svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>';
+}
+
 function renderPersonal(){
   if(!projectData){document.getElementById('section-personal').innerHTML='';return;}
   const personal=projectData.personal||[];
 
   if(!personal.length){
-    document.getElementById('section-personal').innerHTML=`<div class="empty-state"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/></svg><h3>Sin personal</h3><p>Añade filas a la hoja PERSONAL de tu Google Sheet.</p></div>`;
+    document.getElementById('section-personal').innerHTML=`<div class="empty-state"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/></svg><h3>Sin personal</h3><p>Añade filas a la hoja PERSONAL de tu Google Sheet con columnas: NOMBRE, AREA, ROL, TURNO_INI, TURNO_FIN, ESCENARIO.</p></div>`;
     return;
   }
 
   const areas=[...new Set(personal.map(p=>p.AREA).filter(Boolean))];
-  let html=`<div style="font-size:20px;font-weight:800;letter-spacing:-.02em;color:var(--tx);margin-bottom:4px">Personal</div>
-    <div style="font-size:13px;color:var(--tx2);margin-bottom:16px">${personal.length} técnicos · ${areas.length} áreas</div>
-    <div class="personal-grid">`;
+  const totalTurnos=personal.filter(p=>p.TURNO_INI&&p.TURNO_FIN).length;
+
+  let html=`<div class="personal-top">
+    <div>
+      <div class="personal-title">Personal</div>
+      <div class="personal-sub">${esc(currentProject.name)} · equipo técnico</div>
+    </div>
+    <div class="personal-stats">
+      <div class="pstat"><div class="pstat-val">${personal.length}</div><div class="pstat-label">Técnicos</div></div>
+      <div class="pstat"><div class="pstat-val">${areas.length}</div><div class="pstat-label">Áreas</div></div>
+      ${totalTurnos?`<div class="pstat"><div class="pstat-val">${totalTurnos}</div><div class="pstat-label">Con turno</div></div>`:''}
+    </div>
+  </div>
+  <div class="personal-grid">`;
 
   areas.forEach((area,di)=>{
     const col=DEPT_COLORS[di%DEPT_COLORS.length];
     const people=personal.filter(p=>p.AREA===area);
+    const icon=getDeptIcon(area);
+    const escenarios=[...new Set(people.map(p=>p.ESCENARIO).filter(Boolean))];
+
     html+=`<div class="dept-card">
       <div class="dept-header">
-        <div class="dept-name" style="color:${col}">${esc(area)}</div>
-        <div class="dept-count">${people.length} persona${people.length!==1?'s':''}</div>
+        <div class="dept-icon" style="background:${col}22;color:${col}">${icon}</div>
+        <div class="dept-info">
+          <div class="dept-name" style="color:${col}">${esc(area)}</div>
+          <div class="dept-count">${people.length} persona${people.length!==1?'s':''}${escenarios.length?` · ${escenarios.join(', ')}`:''}</div>
+        </div>
       </div>
       <div class="dept-body">
-        ${people.map(p=>`<div class="person-row">
-          <div class="person-avatar" style="background:${col}22;color:${col}">${(p.NOMBRE||'?').substring(0,2).toUpperCase()}</div>
-          <div class="person-info">
-            <div class="person-name">${esc(p.NOMBRE)}</div>
-            ${p.ROL?`<div class="person-rol">${esc(p.ROL)}</div>`:''}
-          </div>
-          ${(p.TURNO_INI&&p.TURNO_FIN)?`<div class="person-turno">${esc(p.TURNO_INI)}–${esc(p.TURNO_FIN)}</div>`:''}
-        </div>`).join('')}
+        ${people.map(p=>{
+          const initials=(p.NOMBRE||'?').split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
+          return `<div class="person-row">
+            <div class="person-avatar" style="background:${col}22;color:${col}">${initials}</div>
+            <div class="person-info">
+              <div class="person-name">${esc(p.NOMBRE)}</div>
+              <div class="person-rol">${esc(p.ROL||p.AREA||'')}</div>
+            </div>
+            <div class="person-right">
+              ${(p.TURNO_INI&&p.TURNO_FIN)?`<div class="person-turno">${esc(p.TURNO_INI)} – ${esc(p.TURNO_FIN)}</div>`:''}
+              ${p.ESCENARIO?`<div class="person-escenario">${esc(p.ESCENARIO)}</div>`:''}
+            </div>
+          </div>`;
+        }).join('')}
       </div>
+      ${people.some(p=>p.TELEFONO)?`<div class="dept-footer">
+        <div class="dept-footer-text">${people.filter(p=>p.TELEFONO).map(p=>`${esc(p.NOMBRE)} · ${esc(p.TELEFONO)}`).join(' &nbsp;·&nbsp; ')}</div>
+      </div>`:''}
     </div>`;
   });
 
