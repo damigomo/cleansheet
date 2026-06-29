@@ -521,22 +521,26 @@ function parseProject(data){
     }
   }
 
-  // HORARIOS — parsing posicional
+  // HORARIOS
   const horTab=findTab(tabs,['HORARIOS','HORARIO']);
   if(horTab&&raw[horTab]){
-    const rows=raw[horTab].filter(r=>r&&r.some(c=>c&&c.toString().trim()));
-    if(rows.length){
-      const header=(rows[0]||[]).map(h=>(h||'').toString().trim());
-      P.horHeader=header;
-      P.horarios=rows.slice(1).map(r=>header.map((_,i)=>(r[i]||'').toString().trim()));
-      P.horEscCols=header.map((h,i)=>({h,i})).filter(c=>/ESCENARIO/i.test(c.h)).map(c=>c.i);
+    const parsed=parseHorarios(raw[horTab]);
+    P.horariosDays=parsed.days;
+    P.horHeader=parsed.header;
+    // flat list para compatibilidad
+    P.horarios=parsed.days.flatMap(d=>d.acts||[]);
+    // escenarios desde cabecera
+    if(!P.escenarios.length&&parsed.header.length){
+      // escenarios son las columnas que parecen escenarios
+      const escCols=parsed.header.filter(h=>/ESCENARIO/i.test(h));
+      if(escCols.length) P.escenarios=escCols;
     }
   }
 
   // OVERALL — mantener todas las filas para grid completo
   const ovTab=findTab(tabs,['OVERALL']);
   if(ovTab&&raw[ovTab]){
-    const allRows=raw[ovTab]||[];
+    const allRows=(raw[ovTab]||[]);
     // Buscar fila cabecera: la que tiene "BANDA" en alguna celda (no la primera col)
     let headIdx=allRows.findIndex(r=>r&&r.slice(1).some(c=>/BANDA/i.test(c||'')));
     if(headIdx<0)headIdx=0;
@@ -572,159 +576,198 @@ function parseProject(data){
   return P;
 }
 
-/* INPUT LIST / SUMA: detecta estructura por nombres de banda en fila 0 o cabeceras BANDA N/ */
+/* ══ PARSERS REALES basados en estructura visual de la plantilla ══ */
+
+/* SUMA / INPUT LIST
+   Estructura: fila0=nombre banda cada 6 cols (A,G,M,S)
+               filas 1-4 = info/soundcheck/show (ignorar)
+               fila5 = cabeceras: IN, INST, MIC, STANDS, S.BOX, INFO
+               fila6+ = datos de canales
+   Bloques de 6 columnas por banda
+*/
 function parseInputList(rows){
-  if(!rows||!rows.length)return [];
+  if(!rows||rows.length<2)return [];
+  const BLOCK=6;
+  // Fila 0: nombres de banda en posiciones 0, 6, 12, 18...
+  const bandRow=rows[0]||[];
+  const bands=[];
+  for(let col=0;col<bandRow.length;col+=BLOCK){
+    const name=(bandRow[col]||'').toString().trim();
+    if(name)bands.push({col,name});
+  }
+  if(!bands.length)return [];
 
-  // METODO A: buscar fila con cabeceras BANDA N/CAMPO
-  let hIdx=rows.findIndex(r=>r&&r.some(c=>/BANDA\s*\d+/i.test(c||'')&&/\/(IN|INST|MIC)\b/i.test(c||'')));
-  if(hIdx<0)hIdx=rows.findIndex(r=>r&&r.some(c=>/\/IN\b|\/INST\b|\/MIC\b/i.test(c||'')));
-
-  if(hIdx>=0){
-    const header=rows[hIdx]||[];
-    const dataStart=hIdx+1;
-  // Detectar grupos de banda por prefijo "BANDA N"
-  const bandCols={}; // bandIdx -> {field->colIndex}
-  header.forEach((h,i)=>{
-    if(!h)return;
-    const m=h.match(/BANDA\s*(\d+)/i);
-    if(m){
-      const idx=parseInt(m[1]);
-      if(!bandCols[idx])bandCols[idx]={};
-      // último segmento tras última /
-      const parts=h.split('/');
-      const field=parts[parts.length-1].trim().toUpperCase();
-      bandCols[idx][field]=i;
+  // Buscar fila de cabeceras: la que tiene "IN" o "INST" en la primera col del primer bloque
+  let hRow=-1;
+  for(let r=1;r<Math.min(rows.length,8);r++){
+    const row=rows[r]||[];
+    const cell=(row[bands[0].col]||'').toString().trim().toUpperCase();
+    if(cell==='IN'||cell==='INST'||cell==='CH'){hRow=r;break;}
+  }
+  if(hRow<0){
+    // buscar fila con cabeceras típicas
+    for(let r=1;r<Math.min(rows.length,8);r++){
+      const row=rows[r]||[];
+      if(row.some(c=>{const v=(c||'').toString().trim().toUpperCase();return v==='IN'||v==='INST'||v==='MIC';})){hRow=r;break;}
     }
-  });
-  const bandas=[];
-  Object.keys(bandCols).sort((a,b)=>a-b).forEach(idx=>{
-    const cols=bandCols[idx];
-    const inField=cols['IN']!==undefined?cols['IN']:Object.values(cols)[0];
-    const channels=[];
-    for(let r=dataStart;r<rows.length;r++){
-      const row=rows[r];if(!row)continue;
-      const ch=row[inField];
-      const inst=cols['INST']!==undefined?(row[cols['INST']]||'').trim():'';
-      const mic=cols['MIC']!==undefined?(row[cols['MIC']]||'').trim():'';
-      const stands=cols['STANDS']!==undefined?(row[cols['STANDS']]||'').trim():'';
-      const sbox=cols['S.BOX']!==undefined?(row[cols['S.BOX']]||'').trim():'';
-      const info=cols['INFO']!==undefined?(row[cols['INFO']]||'').trim():'';
-      if(ch&&ch.toString().trim()){
-        channels.push({ch:ch.toString().trim(),inst,mic,stands,sbox,info});
-      }
-    }
-    bandas.push({idx:parseInt(idx),channels});
-  });
-  return bandas;
-  } // end METODO A
+  }
+  if(hRow<0)hRow=4; // fallback fila 5 (índice 4)
 
-  // METODO B: estructura posicional — fila0=nombres banda, fila1=campos (IN,INST,MIC,STANDS,S.BOX,INFO)
-  const bandNames=rows[0]||[];
-  const fieldRow=rows[1]||[];
-  // Detectar anchura de bloque por posicion del primer campo repetido
-  const blockSize=fieldRow.slice(1).findIndex((f,i)=>i>0&&f&&fieldRow[1]&&f.toString().trim().toUpperCase()===fieldRow[1].toString().trim().toUpperCase())+1||6;
-  const bandas=[];
-  let bIdx=0;
-  for(let col=0;col<bandNames.length;col+=blockSize){
-    const bname=(bandNames[col]||'').toString().trim();
-    if(!bname)continue;
-    bIdx++;
-    const fields=(fieldRow.slice(col,col+blockSize)||[]).map(f=>(f||'').toString().trim().toUpperCase());
+  const fieldRow=rows[hRow]||[];
+  const result=[];
+  bands.forEach(({col,name},bi)=>{
+    // Leer cabeceras del bloque
+    const fields=[];
+    for(let f=0;f<BLOCK;f++){
+      fields.push((fieldRow[col+f]||'').toString().trim().toUpperCase());
+    }
     const inPos=fields.findIndex(f=>f==='IN'||f==='CH');
     const instPos=fields.findIndex(f=>f==='INST'||f.includes('INST'));
     const micPos=fields.findIndex(f=>f==='MIC');
     const standsPos=fields.findIndex(f=>f==='STANDS'||f==='STAND');
-    const sboxPos=fields.findIndex(f=>f==='S.BOX'||f==='SBOX');
+    const sboxPos=fields.findIndex(f=>f==='S.BOX'||f==='SBOX'||f==='S BOX');
     const infoPos=fields.findIndex(f=>f==='INFO');
     const channels=[];
-    for(let r=2;r<rows.length;r++){
+    for(let r=hRow+1;r<rows.length;r++){
       const row=rows[r]||[];
-      const base=col;
-      const ch=inPos>=0?(row[base+inPos]||'').toString().trim():'';
+      const ch=inPos>=0?(row[col+inPos]||'').toString().trim():'';
       if(!ch)continue;
       channels.push({
         ch,
-        inst:instPos>=0?(row[base+instPos]||'').toString().trim():'',
-        mic:micPos>=0?(row[base+micPos]||'').toString().trim():'',
-        stands:standsPos>=0?(row[base+standsPos]||'').toString().trim():'',
-        sbox:sboxPos>=0?(row[base+sboxPos]||'').toString().trim():'',
-        info:infoPos>=0?(row[base+infoPos]||'').toString().trim():'',
+        inst:instPos>=0?(row[col+instPos]||'').toString().trim():'',
+        mic:micPos>=0?(row[col+micPos]||'').toString().trim():'',
+        stands:standsPos>=0?(row[col+standsPos]||'').toString().trim():'',
+        sbox:sboxPos>=0?(row[col+sboxPos]||'').toString().trim():'',
+        info:infoPos>=0?(row[col+infoPos]||'').toString().trim():'',
       });
     }
-    if(channels.length)bandas.push({idx:bIdx,name:bname,channels});
-  }
-  return bandas;
+    result.push({idx:bi+1,name,channels});
+  });
+  return result;
 }
 
-/* MONITORES: cabeceras "BANDA 1/OUT", "BANDA 1/PATCH"... */
+/* MONITORES
+   Estructura: fila0=BANDA 1, BANDA 2... cada 4 cols (A,E,I,M)
+               fila1=cabeceras: OUT, PATCH, MONITOR, NOTAS
+               fila2+ = datos
+   Bloques de 4 columnas (o 5 con la col de fila vacía entre bandas)
+*/
 function parseMonitores(rows){
-  if(!rows||!rows.length)return [];
-  let hIdx=rows.findIndex(r=>r&&r.some(c=>/BANDA\s*\d+/i.test(c||'')&&/\/(OUT|PATCH|MONITOR)\b/i.test(c||'')));
-  if(hIdx<0)hIdx=rows.findIndex(r=>r&&r.some(c=>/BANDA\s*\d+/i.test(c||'')));
-  if(hIdx<0)return [];
-  const header=rows[hIdx]||[];
-  const dataStart=hIdx+1;
-  const bandCols={};
-  header.forEach((h,i)=>{
-    if(!h)return;
-    const m=h.match(/BANDA\s*(\d+)/i);
-    if(m){
-      const idx=parseInt(m[1]);
-      if(!bandCols[idx])bandCols[idx]={};
-      const parts=h.split('/');
-      const field=parts[parts.length-1].trim().toUpperCase();
-      bandCols[idx][field]=i;
+  if(!rows||rows.length<2)return [];
+  // Detectar ancho de bloque buscando "BANDA" en fila 0
+  const headRow=rows[0]||[];
+  const bands=[];
+  headRow.forEach((c,i)=>{
+    if(/BANDA\s*\d+/i.test((c||'').toString())){
+      bands.push({col:i,name:(c||'').toString().trim()});
     }
   });
-  const bandas=[];
-  Object.keys(bandCols).sort((a,b)=>a-b).forEach(idx=>{
-    const cols=bandCols[idx];
-    const outField=cols['OUT']!==undefined?cols['OUT']:Object.values(cols)[0];
+  if(!bands.length)return [];
+
+  // fila 1 = cabeceras
+  const fieldRow=rows[1]||[];
+  const result=[];
+  bands.forEach(({col,name},bi)=>{
+    // ancho de bloque = distancia a la siguiente banda o fin
+    const nextCol=bands[bi+1]?bands[bi+1].col:headRow.length;
+    const width=nextCol-col;
+    const fields=[];
+    for(let f=0;f<width;f++) fields.push((fieldRow[col+f]||'').toString().trim().toUpperCase());
+    const outPos=fields.findIndex(f=>f==='OUT');
+    const patchPos=fields.findIndex(f=>f==='PATCH');
+    const monPos=fields.findIndex(f=>f==='MONITOR'||f==='MON');
+    const notasPos=fields.findIndex(f=>f==='NOTAS'||f==='NOTES');
     const outs=[];
-    for(let r=dataStart;r<rows.length;r++){
-      const row=rows[r];if(!row)continue;
-      const out=row[outField];
-      const patch=cols['PATCH']!==undefined?(row[cols['PATCH']]||'').trim():'';
-      const monitor=cols['MONITOR']!==undefined?(row[cols['MONITOR']]||'').trim():'';
-      const notas=cols['NOTAS']!==undefined?(row[cols['NOTAS']]||'').trim():'';
-      if((patch||monitor||notas)&&out){
-        outs.push({out:out.toString().trim(),patch,monitor,notas});
-      }
+    for(let r=2;r<rows.length;r++){
+      const row=rows[r]||[];
+      const out=outPos>=0?(row[col+outPos]||'').toString().trim():'';
+      const patch=patchPos>=0?(row[col+patchPos]||'').toString().trim():'';
+      const monitor=monPos>=0?(row[col+monPos]||'').toString().trim():'';
+      const notas=notasPos>=0?(row[col+notasPos]||'').toString().trim():'';
+      if(out||(patch&&monitor)) outs.push({out,patch,monitor,notas});
     }
-    bandas.push({idx:parseInt(idx),outs});
+    result.push({idx:bi+1,name,outs});
   });
-  return bandas;
+  return result;
 }
 
-/* PERSONAL: bloques "ESCENARIO N/TURNO M" con filas ROL, TÉCNICO, CONTACTO */
+/* HORARIOS
+   Estructura: fila0=día (VIERNES 10 / SABADO 12) colspan
+               fila1=cabeceras (ESCENARIO 1, ARRIVAL, SET UP ON STAGE, SET UP OFF STAGE, SOUNDCHECK, CHANGE OVER & LINECHECK, SHOW TIME, DURATION)
+               filas 2+ = bandas. Hay bloques por día separados por filas vacías + nueva fila de día
+*/
+function parseHorarios(rows){
+  if(!rows||!rows.length)return {days:[],header:[]};
+  const days=[];
+  let curDay=null;
+  let header=[];
+  for(let r=0;r<rows.length;r++){
+    const row=rows[r]||[];
+    const first=(row[0]||'').toString().trim();
+    const second=(row[1]||'').toString().trim();
+    // Detectar fila de día: primera celda no vacía y segunda vacía y la siguiente fila tiene cabeceras
+    if(first&&!second&&row.slice(1).every(c=>!(c||'').toString().trim())){
+      // fila de día
+      curDay={name:first,acts:[]};
+      days.push(curDay);
+      // siguiente fila son cabeceras
+      if(rows[r+1]){
+        header=(rows[r+1]||[]).map(c=>(c||'').toString().trim());
+        r++; // saltar fila cabecera
+      }
+      continue;
+    }
+    // Fila de datos: primera celda es nombre de banda
+    if(first&&curDay){
+      const act={banda:first};
+      header.forEach((h,i)=>{
+        if(h&&h.toUpperCase()!=='ESCENARIO 1'&&h.toUpperCase()!=='ESCENARIO') {
+          act[h]=(row[i]||'').toString().trim();
+        }
+      });
+      act.escenario=(header[0]||'ESCENARIO');
+      curDay.acts.push(act);
+    }
+  }
+  return {days,header};
+}
+
+/* PERSONAL
+   Estructura: columna A = ESCENARIO N (merged), columna B = ROL/N.TECNICO/CONTACTO/OTROS
+               cabecera de turno en fila highlight: TURNO 1 / TURNO 2
+               columnas C+ = roles (STAGE MANAGER, FOH, MON, ESCENARIO 1, ESCENARIO 2, ILUMINACION 1...)
+*/
 function parsePersonal(rows){
   if(!rows||!rows.length)return null;
-  const escenarios={};
-  let curEsc=null,curTurno=null,curRoles=[];
+  const result={};
+  let curEsc='';
+  let curTurno='';
+  let curRoles=[];
   rows.forEach(row=>{
-    const first=(row[0]||'').trim();
-    if(!first)return;
-    const escM=first.match(/ESCENARIO\s*(\d+)\s*\/\s*TURNO\s*(\d+)/i);
-    if(escM){
-      curEsc='Escenario '+escM[1];
-      curTurno='Turno '+escM[2];
-      if(!escenarios[curEsc])escenarios[curEsc]={};
-      if(!escenarios[curEsc][curTurno])escenarios[curEsc][curTurno]={roles:[],tecnicos:[],contactos:[],otros:[]};
+    const colA=(row[0]||'').toString().trim();
+    const colB=(row[1]||'').toString().trim().toUpperCase();
+    const rest=row.slice(2).map(c=>(c||'').toString().trim());
+    // Nueva fila de escenario (col A tiene valor)
+    if(colA) curEsc=colA;
+    // Fila de turno: colB vacío pero alguna celda del resto tiene "TURNO"
+    const allCols=row.map(c=>(c||'').toString().trim());
+    const turnoCell=allCols.find(c=>/TURNO\s*\d+/i.test(c));
+    if(turnoCell){
+      curTurno=turnoCell;
+      curRoles=[];
+      if(!result[curEsc])result[curEsc]={};
+      if(!result[curEsc][curTurno])result[curEsc][curTurno]={roles:[],tecnicos:[],contactos:[],otros:[]};
       return;
     }
-    const fieldM=first.match(/ESCENARIO\s*(\d+)\s*\/\s*(.+)/i);
-    if(fieldM&&curEsc&&curTurno){
-      const field=fieldM[2].trim().toUpperCase();
-      const vals=row.slice(1).map(v=>(v||'').trim());
-      const block=escenarios[curEsc][curTurno];
-      if(field.includes('ROL'))block.roles=vals;
-      else if(field.includes('TÉCNICO')||field.includes('TECNICO'))block.tecnicos=vals;
-      else if(field.includes('CONTACTO'))block.contactos=vals;
-      else if(field.includes('OTROS'))block.otros=vals;
-    }
+    if(!curEsc||!curTurno)return;
+    const block=result[curEsc][curTurno];
+    if(!block)return;
+    if(colB==='ROL'){block.roles=rest.filter(Boolean);curRoles=rest;}
+    else if(colB==='N. TECNICO'||colB==='N.TECNICO'||colB==='TECNICO')block.tecnicos=rest;
+    else if(colB==='CONTACTO')block.contactos=rest;
+    else if(colB==='OTROS')block.otros=rest;
   });
-  return escenarios;
+  return Object.keys(result).length?result:null;
 }
 
 /* ── SIDEBAR ── */
@@ -836,68 +879,69 @@ function renderInfo(){
 
 /* ── HORARIOS ── */
 function renderHorarios(){
-  const rows=projectData.horarios;
-  if(!rows||!rows.length)return emptyMsg('Horarios','Anade datos a la hoja HORARIOS.','clock');
-  const header=projectData.horHeader||[];
-  const escCols=projectData.horEscCols||[];
+  const days=projectData.horariosDays||[];
+  if(!days.length)return emptyMsg('Horarios','Añade datos a la hoja HORARIOS.','clock');
+
+  const colStyles={
+    'ARRIVAL':'color:var(--llegada)',
+    'SET UP ON STAGE':'color:var(--offstage)',
+    'SET UP OFF STAGE':'color:var(--offstage)',
+    'SOUNDCHECK':'color:var(--sc);font-weight:600',
+    'CHANGE OVER & LINECHECK':'color:var(--lc)',
+    'SHOW TIME':'color:var(--show);font-weight:700',
+    'DURATION':'color:var(--tx3);font-size:11px',
+  };
 
   const legend=`<div class="h-legend">
-    ${[['var(--loadin)','Load In'],['var(--offstage)','Set Up'],['var(--sc)','Soundcheck'],['var(--lc)','Changeover/Linecheck'],['var(--show)','Show']]
-      .map(([c,t])=>`<div class="h-li"><div class="h-dot" style="background:${c}"></div>${t}</div>`).join('')}
+    <div class="h-li"><div class="h-dot" style="background:var(--llegada)"></div>Arrival</div>
+    <div class="h-li"><div class="h-dot" style="background:var(--offstage)"></div>Set Up</div>
+    <div class="h-li"><div class="h-dot" style="background:var(--sc)"></div>Soundcheck</div>
+    <div class="h-li"><div class="h-dot" style="background:var(--lc)"></div>Change Over</div>
+    <div class="h-li"><div class="h-dot" style="background:var(--show)"></div>Show</div>
+    <span class="sync-note" onclick="syncProject()">↻ Sincronizar</span>
   </div>`;
 
-  // Cabecera: todas las columnas con nombre
-  let head='<tr>';
-  header.forEach((h,i)=>{ if(h)head+=`<th>${esc(h)}</th>`; });
-  head+='</tr>';
+  // Columnas a mostrar (todas menos la primera que es banda)
+  const allCols=projectData.horHeader.slice(1);
 
-  // Determinar columna del escenario activo para filtrar
-  let filterColIdx=-1;
-  if(activeStage!=='all'){
-    const escIdx=projectData.escenarios.indexOf(activeStage);
-    if(escIdx>=0&&escCols[escIdx]!==undefined)filterColIdx=escCols[escIdx];
-  }
+  let html=legend;
+  days.forEach(day=>{
+    let acts=day.acts||[];
+    if(!acts.length)return;
 
-  let body='';
-  rows.forEach(r=>{
-    // Saltar filas totalmente vacias
-    if(!r.some(c=>c&&c.trim()))return;
-    // Filtro por escenario: la fila debe tener algo en la columna de ese escenario
-    if(filterColIdx>=0 && !(r[filterColIdx]&&r[filterColIdx].trim()))return;
-
-    body+='<tr>';
-    header.forEach((h,i)=>{
-      if(!h)return;
-      let val=(r[i]||'').trim();
-      let style='';
-      if(/SHOW\s*TIME/i.test(h))style='color:var(--show);font-weight:700';
-      else if(/SOUNDCHECK/i.test(h))style='color:var(--sc);font-weight:600';
-      else if(/CHANGE|LINECHECK/i.test(h))style='color:var(--lc)';
-      else if(/LOAD/i.test(h))style='color:var(--loadin)';
-      else if(/SET\s*UP/i.test(h))style='color:var(--offstage)';
-      else if(/TIME/i.test(h))style='color:var(--tx3);font-size:11px';
-
-      // Celda de escenario con banda
-      const escPos=escCols.indexOf(i);
-      if(escPos>=0){
-        if(val){
-          const col=STAGE_COLORS[escPos%STAGE_COLORS.length];
-          body+=`<td class="artist-cell"><span class="stage-pill" style="background:${col}22;color:${col}">${esc(val)}</span></td>`;
-        } else {
-          body+=`<td class="hz-empty">·</td>`;
-        }
-        return;
-      }
-      if(!val||val==='-'||val==='\\-'){body+=`<td class="hz-empty">·</td>`;return;}
-      body+=`<td style="${style}">${esc(val)}</td>`;
+    // Cabecera de la tabla
+    let thead=`<tr><th style="min-width:160px;text-align:left">Artista</th>`;
+    allCols.forEach(col=>{
+      if(col) thead+=`<th style="white-space:nowrap">${esc(col)}</th>`;
     });
-    body+='</tr>';
+    thead+=`</tr>`;
+
+    let tbody='';
+    acts.forEach(act=>{
+      tbody+=`<tr><td class="artist-cell" style="font-weight:700;font-size:13px;text-align:left">${esc(act.banda)}</td>`;
+      allCols.forEach(col=>{
+        if(!col)return;
+        const val=act[col]||'';
+        const style=colStyles[col]||'';
+        tbody+=`<td style="${style}">${val?esc(val):'<span style="color:var(--tx3)">·</span>'}</td>`;
+      });
+      tbody+=`</tr>`;
+    });
+
+    html+=`<div class="day-block" style="margin-bottom:28px">
+      <div class="day-block-header" style="display:flex;align-items:center;gap:12px;padding:10px 14px;background:var(--panel);border:1px solid var(--line);border-radius:var(--rl) var(--rl) 0 0;border-bottom:none">
+        <div style="font-size:16px;font-weight:800;letter-spacing:-.02em">${esc(day.name)}</div>
+        <div style="font-size:12px;color:var(--tx3);font-family:var(--mono)">${acts.length} actuaciones</div>
+      </div>
+      <div style="overflow-x:auto;border:1px solid var(--line);border-radius:0 0 var(--rl) var(--rl)">
+        <table class="hz-table"><thead>${thead}</thead><tbody>${tbody}</tbody></table>
+      </div>
+    </div>`;
   });
 
   return `<div class="sec-title">Horarios</div>
-    <div class="sec-sub">${esc(projectData.info['NOMBRE EVENTO']||'')} · ${projectData.escenarios.length||1} escenario(s)</div>
-    ${legend}
-    <div class="overall-wrap"><table class="hz-table"><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
+    <div class="sec-sub">${days.length} día(s) · ${days.reduce((s,d)=>s+(d.acts||[]).length,0)} actuaciones</div>
+    ${html}`;
 }
 
 /* ── OVERALL (bandas en columnas) ── */
@@ -1011,36 +1055,57 @@ function setBandaMon(i){activeBanda=i;showSection('monitores');}
 /* ── PERSONAL ── */
 function renderPersonal(){
   const pers=projectData.personal;
-  if(!pers||!Object.keys(pers).length)return emptyMsg('Personal','Añade datos a la hoja PERSONAL con bloques ESCENARIO/TURNO.','users');
+  if(!pers||!Object.keys(pers).length)return emptyMsg('Personal','Añade datos a la hoja PERSONAL.','users');
 
-  let html=`<div class="sec-title">Personal</div><div class="sec-sub">Equipo técnico por escenario y turno</div>`;
+  const totalTecs=Object.values(pers)
+    .flatMap(t=>Object.values(t))
+    .flatMap(b=>b.tecnicos||[])
+    .filter(Boolean).length;
 
-  Object.entries(pers).forEach(([esc_,turnos])=>{
+  let html=`<div class="sec-title">Personal</div>
+    <div class="sec-sub">Equipo técnico por escenario y turno · ${totalTecs} técnicos</div>`;
+
+  Object.entries(pers).forEach(([escName,turnos])=>{
     html+=`<div class="esc-block">
       <div class="esc-head">
         <div class="esc-head-icon"><svg viewBox="0 0 24 24"><path d="M2 20h20M4 20V10l8-6 8 6v10"/><path d="M10 20v-6h4v6"/></svg></div>
-        <div class="esc-name">${esc(esc_)}</div>
+        <div class="esc-name">${esc(escName)}</div>
       </div>`;
-    Object.entries(turnos).forEach(([turno,block])=>{
+
+    Object.entries(turnos).forEach(([turnoName,block])=>{
       const roles=block.roles||[];
       const tecnicos=block.tecnicos||[];
       const contactos=block.contactos||[];
       const otros=block.otros||[];
-      // construir tabla: columnas = roles
-      const cols=roles.map((r,i)=>({rol:r,tec:tecnicos[i]||'',con:contactos[i]||'',otro:otros[i]||''})).filter(c=>c.rol);
-      if(!cols.length)return;
-      html+=`<div class="turno-head"><span class="turno-tag">${esc(turno)}</span></div>
-        <div class="overall-wrap"><table class="turno-table">
-          <thead><tr><th style="text-align:left">Rol</th>${cols.map(c=>`<th>${esc(c.rol)}</th>`).join('')}</tr></thead>
+      if(!roles.length)return;
+
+      html+=`<div class="turno-head"><span class="turno-tag">${esc(turnoName)}</span></div>
+        <div style="overflow-x:auto">
+        <table class="turno-table" style="min-width:100%">
+          <thead><tr>
+            <th style="text-align:left;min-width:90px">—</th>
+            ${roles.map(r=>`<th>${esc(r)}</th>`).join('')}
+          </tr></thead>
           <tbody>
-            <tr><td class="role-label">Técnico</td>${cols.map(c=>`<td class="tec-name">${esc(c.tec)||'<span style="color:var(--tx3)">·</span>'}</td>`).join('')}</tr>
-            <tr><td class="role-label">Contacto</td>${cols.map(c=>`<td class="tec-contact">${esc(c.con)||'<span style="color:var(--tx3)">·</span>'}</td>`).join('')}</tr>
-            ${otros.some(o=>o)?`<tr><td class="role-label">Otros</td>${cols.map(c=>`<td class="tec-contact">${esc(c.otro)||'<span style="color:var(--tx3)">·</span>'}</td>`).join('')}</tr>`:''}
+            <tr>
+              <td class="role-label">Técnico</td>
+              ${roles.map((_,i)=>`<td class="tec-name">${esc(tecnicos[i]||'')||'<span style="color:var(--tx3)">·</span>'}</td>`).join('')}
+            </tr>
+            <tr>
+              <td class="role-label">Contacto</td>
+              ${roles.map((_,i)=>`<td class="tec-contact">${esc(contactos[i]||'')}</td>`).join('')}
+            </tr>
+            ${otros.some(Boolean)?`<tr>
+              <td class="role-label">Otros</td>
+              ${roles.map((_,i)=>`<td class="tec-contact">${esc(otros[i]||'')}</td>`).join('')}
+            </tr>`:''}
           </tbody>
         </table></div>`;
     });
+
     html+='</div>';
   });
+
   return html;
 }
 
