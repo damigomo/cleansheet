@@ -527,14 +527,11 @@ function parseProject(data){
     const parsed=parseHorarios(raw[horTab]);
     P.horariosDays=parsed.days;
     P.horHeader=parsed.header;
-    // flat list para compatibilidad
-    P.horarios=parsed.days.flatMap(d=>d.acts||[]);
-    // escenarios desde cabecera
-    if(!P.escenarios.length&&parsed.header.length){
-      // escenarios son las columnas que parecen escenarios
-      const escCols=parsed.header.filter(h=>/ESCENARIO/i.test(h));
-      if(escCols.length) P.escenarios=escCols;
-    }
+    P.horTimeCols=parsed.timeCols||[];
+    P.horarios=parsed.days.flatMap(d=>(d.stages||[]).flatMap(s=>s.acts||[]));
+    // Escenarios desde los bloques detectados
+    const stageNames=[...new Set(parsed.days.flatMap(d=>(d.stages||[]).map(s=>s.name)))];
+    if(!P.escenarios.length&&stageNames.length) P.escenarios=stageNames;
   }
 
   // OVERALL — mantener todas las filas para grid completo
@@ -692,44 +689,84 @@ function parseMonitores(rows){
 }
 
 /* HORARIOS
-   Estructura: fila0=día (VIERNES 10 / SABADO 12) colspan
-               fila1=cabeceras (ESCENARIO 1, ARRIVAL, SET UP ON STAGE, SET UP OFF STAGE, SOUNDCHECK, CHANGE OVER & LINECHECK, SHOW TIME, DURATION)
-               filas 2+ = bandas. Hay bloques por día separados por filas vacías + nueva fila de día
+   Estructura real:
+   - Fila con una sola celda no vacía = titulo de DIA (VIERNES 10, SABADO 12)
+   - Fila siguiente = cabeceras: [vacío, BAND, ARRIVAL, SET UP ON STAGE, ...]
+   - Col A = escenario (texto vertical, puede repetirse o estar vacío para mismo escenario)
+   - Col B = nombre de banda
+   - Cols C+ = tiempos
+   - Filas vacías = separadores entre escenarios
+   - Nuevo bloque de DIA tras filas vacías
 */
 function parseHorarios(rows){
   if(!rows||!rows.length)return {days:[],header:[]};
   const days=[];
   let curDay=null;
   let header=[];
+  let curStage='';
+
   for(let r=0;r<rows.length;r++){
     const row=rows[r]||[];
-    const first=(row[0]||'').toString().trim();
-    const second=(row[1]||'').toString().trim();
-    // Detectar fila de día: primera celda no vacía y segunda vacía y la siguiente fila tiene cabeceras
-    if(first&&!second&&row.slice(1).every(c=>!(c||'').toString().trim())){
-      // fila de día
-      curDay={name:first,acts:[]};
-      days.push(curDay);
-      // siguiente fila son cabeceras
-      if(rows[r+1]){
+    const vals=row.map(c=>(c||'').toString().trim());
+    const nonEmpty=vals.filter(Boolean);
+
+    // Fila de DIA: una sola celda con texto, todas las demás vacías
+    if(nonEmpty.length===1&&nonEmpty[0].length>3){
+      // Verificar que la siguiente tiene cabeceras tipo BAND/ARRIVAL
+      const nextRow=(rows[r+1]||[]).map(c=>(c||'').toString().trim());
+      const isHeader=nextRow.some(v=>/^(BAND|ARRIVAL|SET UP|SOUNDCHECK|SHOW TIME|DURATION)/i.test(v));
+      if(isHeader){
+        curDay={name:nonEmpty[0],stages:[]};
+        days.push(curDay);
+        curStage='';
+        // leer cabeceras (fila r+1)
         header=(rows[r+1]||[]).map(c=>(c||'').toString().trim());
-        r++; // saltar fila cabecera
+        r++; // saltar cabecera
+        continue;
       }
+    }
+
+    if(!curDay)continue;
+
+    // Fila vacía = separador (resetear escenario actual para nueva agrupación)
+    if(!nonEmpty.length){
+      curStage='';
       continue;
     }
-    // Fila de datos: primera celda es nombre de banda
-    if(first&&curDay){
-      const act={banda:first};
-      header.forEach((h,i)=>{
-        if(h&&h.toUpperCase()!=='ESCENARIO 1'&&h.toUpperCase()!=='ESCENARIO') {
-          act[h]=(row[i]||'').toString().trim();
-        }
-      });
-      act.escenario=(header[0]||'ESCENARIO');
-      curDay.acts.push(act);
+
+    // Col A puede tener nombre de escenario (texto vertical en Sheets llega como texto en primera celda)
+    const colA=vals[0];
+    const colB=vals[1]; // nombre de banda
+    const colAisstage=colA&&!/^\d/.test(colA); // no empieza por número
+
+    if(colA&&colAisstage&&colA!==curStage){
+      curStage=colA;
     }
+
+    // Si colB es el nombre de banda (col B tiene contenido)
+    const bandName=colB||colA;
+    if(!bandName)continue;
+    // evitar leer filas de cabecera interior
+    if(/^(BAND|ARRIVAL|SET UP|SOUNDCHECK|SHOW|DURATION)/i.test(bandName))continue;
+
+    // Buscar o crear bloque de escenario
+    const stageName=curStage||'Stage 1';
+    let stageBlock=curDay.stages.find(s=>s.name===stageName);
+    if(!stageBlock){stageBlock={name:stageName,acts:[]};curDay.stages.push(stageBlock);}
+
+    // Leer tiempos usando el header (col 0=escenario, col 1=band, col 2+=tiempos)
+    const act={banda:bandName,escenario:stageName};
+    // Cabeceras de tiempo empiezan en col 2 del header
+    header.forEach((h,i)=>{
+      if(i<2||!h)return; // saltar cols de escenario y banda
+      act[h]=(row[i]||'').toString().trim();
+    });
+    stageBlock.acts.push(act);
   }
-  return {days,header};
+
+  // Extraer cols de tiempo (todo excepto las 2 primeras)
+  const timeCols=header.slice(2).filter(Boolean);
+  return {days,header,timeCols};
 }
 
 /* PERSONAL
@@ -882,65 +919,77 @@ function renderHorarios(){
   const days=projectData.horariosDays||[];
   if(!days.length)return emptyMsg('Horarios','Añade datos a la hoja HORARIOS.','clock');
 
-  const colStyles={
-    'ARRIVAL':'color:var(--llegada)',
-    'SET UP ON STAGE':'color:var(--offstage)',
-    'SET UP OFF STAGE':'color:var(--offstage)',
-    'SOUNDCHECK':'color:var(--sc);font-weight:600',
-    'CHANGE OVER & LINECHECK':'color:var(--lc)',
-    'SHOW TIME':'color:var(--show);font-weight:700',
-    'DURATION':'color:var(--tx3);font-size:11px',
+  const timeCols=projectData.horTimeCols||[];
+  const colColors={
+    'ARRIVAL':'var(--llegada)',
+    'SET UP ON STAGE':'var(--offstage)',
+    'SET UP OFF STAGE':'var(--offstage)',
+    'SOUNDCHECK':'var(--sc)',
+    'CHANGE OVER & LINECHECK':'var(--lc)',
+    'SHOW TIME':'var(--show)',
+    'DURATION':'var(--tx3)',
   };
+  const colBold={'SOUNDCHECK':true,'SHOW TIME':true};
 
   const legend=`<div class="h-legend">
     <div class="h-li"><div class="h-dot" style="background:var(--llegada)"></div>Arrival</div>
     <div class="h-li"><div class="h-dot" style="background:var(--offstage)"></div>Set Up</div>
     <div class="h-li"><div class="h-dot" style="background:var(--sc)"></div>Soundcheck</div>
     <div class="h-li"><div class="h-dot" style="background:var(--lc)"></div>Change Over</div>
-    <div class="h-li"><div class="h-dot" style="background:var(--show)"></div>Show</div>
+    <div class="h-li"><div class="h-dot" style="background:var(--show)"></div>Show Time</div>
     <span class="sync-note" onclick="syncProject()">↻ Sincronizar</span>
   </div>`;
 
-  // Columnas a mostrar (todas menos la primera que es banda)
-  const allCols=projectData.horHeader.slice(1);
-
   let html=legend;
-  days.forEach(day=>{
-    let acts=day.acts||[];
-    if(!acts.length)return;
 
-    // Cabecera de la tabla
-    let thead=`<tr><th style="min-width:160px;text-align:left">Artista</th>`;
-    allCols.forEach(col=>{
-      if(col) thead+=`<th style="white-space:nowrap">${esc(col)}</th>`;
-    });
-    thead+=`</tr>`;
+  days.forEach(day=>{
+    if(!(day.stages||[]).length)return;
+
+    // Cabecera de columnas de tiempo
+    const thead=`<tr>
+      <th style="min-width:90px;text-align:left">Escenario</th>
+      <th style="min-width:150px;text-align:left">Artista</th>
+      ${timeCols.map(col=>`<th style="white-space:nowrap;color:${colColors[col]||'inherit'}">${esc(col)}</th>`).join('')}
+    </tr>`;
 
     let tbody='';
-    acts.forEach(act=>{
-      tbody+=`<tr><td class="artist-cell" style="font-weight:700;font-size:13px;text-align:left">${esc(act.banda)}</td>`;
-      allCols.forEach(col=>{
-        if(!col)return;
-        const val=act[col]||'';
-        const style=colStyles[col]||'';
-        tbody+=`<td style="${style}">${val?esc(val):'<span style="color:var(--tx3)">·</span>'}</td>`;
+    day.stages.forEach((stage,si)=>{
+      const stageColor=STAGE_COLORS[si%STAGE_COLORS.length];
+      stage.acts.forEach((act,ai)=>{
+        tbody+=`<tr>`;
+        // Col escenario: solo en primera fila del escenario
+        if(ai===0){
+          tbody+=`<td rowspan="${stage.acts.length}" style="text-align:center;vertical-align:middle;font-weight:700;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:${stageColor};background:${stageColor}11;border-right:2px solid ${stageColor}22;min-width:80px">
+            ${esc(stage.name)}</td>`;
+        }
+        tbody+=`<td style="font-weight:700;font-size:13px;text-align:left;padding:9px 12px">${esc(act.banda)}</td>`;
+        timeCols.forEach(col=>{
+          const val=act[col]||'';
+          const color=colColors[col]||'inherit';
+          const bold=colBold[col]?'font-weight:700;':'';
+          tbody+=`<td style="color:${color};${bold}">${val?esc(val):'<span style="color:var(--tx3)">·</span>'}</td>`;
+        });
+        tbody+=`</tr>`;
       });
-      tbody+=`</tr>`;
+      // Separador entre escenarios
+      if(si<day.stages.length-1){
+        tbody+=`<tr><td colspan="${2+timeCols.length}" style="padding:4px;background:var(--panel2);border:none"></td></tr>`;
+      }
     });
 
-    html+=`<div class="day-block" style="margin-bottom:28px">
-      <div class="day-block-header" style="display:flex;align-items:center;gap:12px;padding:10px 14px;background:var(--panel);border:1px solid var(--line);border-radius:var(--rl) var(--rl) 0 0;border-bottom:none">
+    html+=`<div style="margin-bottom:28px">
+      <div style="display:flex;align-items:center;gap:12px;padding:10px 14px;background:var(--panel);border:1px solid var(--line);border-radius:var(--rl) var(--rl) 0 0;border-bottom:none">
         <div style="font-size:16px;font-weight:800;letter-spacing:-.02em">${esc(day.name)}</div>
-        <div style="font-size:12px;color:var(--tx3);font-family:var(--mono)">${acts.length} actuaciones</div>
+        <div style="font-size:12px;color:var(--tx3);font-family:var(--mono)">${day.stages.length} escenario${day.stages.length!==1?'s':''} · ${day.stages.reduce((s,st)=>s+st.acts.length,0)} actuaciones</div>
       </div>
-      <div style="overflow-x:auto;border:1px solid var(--line);border-radius:0 0 var(--rl) var(--rl)">
+      <div style="overflow-x:auto;border:1px solid var(--line);border-top:none;border-radius:0 0 var(--rl) var(--rl)">
         <table class="hz-table"><thead>${thead}</thead><tbody>${tbody}</tbody></table>
       </div>
     </div>`;
   });
 
   return `<div class="sec-title">Horarios</div>
-    <div class="sec-sub">${days.length} día(s) · ${days.reduce((s,d)=>s+(d.acts||[]).length,0)} actuaciones</div>
+    <div class="sec-sub">${days.length} día(s) · ${days.reduce((s,d)=>s+d.stages.reduce((ss,st)=>ss+st.acts.length,0),0)} actuaciones</div>
     ${html}`;
 }
 
