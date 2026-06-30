@@ -227,7 +227,9 @@ body.printing-landscape{ }
   .main{display:block !important;overflow:visible !important;height:auto !important}
   .content{overflow:visible !important;height:auto !important;display:block !important}
   #view-event{display:block !important;height:auto !important}
-  .section-content{overflow:visible !important;padding:0 !important;height:auto !important}
+  .section-content{overflow:visible !important;padding:0 !important;height:auto !important;margin:0 !important}
+  .section-content > *:first-child{margin-top:0 !important;padding-top:0 !important}
+  .sec-title:first-child{margin-top:0 !important}
   .overall-wrap,div[style*="overflow-x:auto"]{overflow:visible !important}
   table{page-break-inside:auto;width:100% !important}
   tr{page-break-inside:avoid}
@@ -402,7 +404,6 @@ function doExportPDF(orientation){
   const prevTheme=html.getAttribute('data-theme');
   html.setAttribute('data-theme','light');
 
-  // Insertar regla @page dinamica para orientacion
   let styleTag=document.getElementById('print-orientation-style');
   if(!styleTag){
     styleTag=document.createElement('style');
@@ -411,19 +412,26 @@ function doExportPDF(orientation){
   }
   styleTag.textContent=`@page{size:${orientation};margin:8mm}`;
 
-  // Comprimir cada escenario que exceda el alto de pagina disponible
-  // A4: vertical ~297mm, horizontal ~210mm. Restamos margenes (16mm) -> mm utiles
-  const pageHeightMM=(orientation==='landscape'?210:297)-16;
-  const pageHeightPx=pageHeightMM*3.78; // ~3.78px por mm a 96dpi
+  // Dimensiones utiles de pagina (mm -> px a 96dpi: 1mm≈3.78px)
+  const usableWmm=(orientation==='landscape'?297:210)-16;
+  const usableHmm=(orientation==='landscape'?210:297)-16;
+  const pageW=usableWmm*3.78;
+  const pageH=usableHmm*3.78;
+
+  // Escalar cada bloque (.stage-page para overall/suma/mon, .esc-block para personal, .day-block...)
+  const targets=document.querySelectorAll('.stage-page, .esc-block, #section-content > div[style*="overflow-x:auto"], .io-block');
   const scaledEls=[];
-  document.querySelectorAll('.stage-page').forEach(el=>{
-    // medir tras un reflow con estilos de impresion aproximados
+  targets.forEach(el=>{
+    const w=el.scrollWidth;
     const h=el.scrollHeight;
-    if(h>pageHeightPx){
-      const scale=Math.max(0.5,pageHeightPx/h);
+    const scaleW=w>pageW?pageW/w:1;
+    const scaleH=h>pageH?pageH/h:1;
+    const scale=Math.min(scaleW,scaleH);
+    if(scale<1){
       el.style.transformOrigin='top left';
-      el.style.transform=`scale(${scale})`;
-      el.style.width=`${100/scale}%`;
+      el.style.transform=`scale(${scale.toFixed(3)})`;
+      el.style.width=`${(100/scale).toFixed(1)}%`;
+      el.dataset.pdfScaled='1';
       scaledEls.push(el);
     }
   });
@@ -433,10 +441,9 @@ function doExportPDF(orientation){
     setTimeout(()=>{
       html.setAttribute('data-theme',prevTheme);
       styleTag.textContent='';
-      // restaurar escalas
-      scaledEls.forEach(el=>{el.style.transform='';el.style.width='';el.style.transformOrigin='';});
-    },600);
-  },200);
+      scaledEls.forEach(el=>{el.style.transform='';el.style.width='';el.style.transformOrigin='';delete el.dataset.pdfScaled;});
+    },700);
+  },250);
 }
 
 /* ── SHARE LINK ── */
@@ -839,58 +846,59 @@ function matchDayLabel(horariosDays,dayKey){
 */
 function parseInputList(rows){
   if(!rows||rows.length<2)return [];
-  const BLOCK=6;
-  // Fila 0: nombres de banda en posiciones 0, 6, 12, 18...
-  const bandRow=rows[0]||[];
-  const bands=[];
-  for(let col=0;col<bandRow.length;col+=BLOCK){
-    const name=(bandRow[col]||'').toString().trim();
-    if(name)bands.push({col,name});
-  }
-  if(!bands.length)return [];
-
-  // Buscar fila de cabeceras: la que tiene "IN" o "INST" en la primera col del primer bloque
+  // Buscar la fila de cabeceras: la que contiene uno o mas "IN"
   let hRow=-1;
-  for(let r=1;r<Math.min(rows.length,8);r++){
+  for(let r=0;r<Math.min(rows.length,10);r++){
     const row=rows[r]||[];
-    const cell=(row[bands[0].col]||'').toString().trim().toUpperCase();
-    if(cell==='IN'||cell==='INST'||cell==='CH'){hRow=r;break;}
+    if(row.filter(c=>/^IN$/i.test((c||'').toString().trim())).length>=1){hRow=r;break;}
   }
-  if(hRow<0){
-    // buscar fila con cabeceras típicas
-    for(let r=1;r<Math.min(rows.length,8);r++){
-      const row=rows[r]||[];
-      if(row.some(c=>{const v=(c||'').toString().trim().toUpperCase();return v==='IN'||v==='INST'||v==='MIC';})){hRow=r;break;}
-    }
-  }
-  if(hRow<0)hRow=4; // fallback fila 5 (índice 4)
-
+  if(hRow<0)return [];
   const fieldRow=rows[hRow]||[];
+  // La fila de nombres de banda es la inmediatamente superior a las cabeceras
+  const nameRow=rows[hRow-1]||[];
+
+  // Detectar bloques por la posicion de cada "IN"
+  const inCols=[];
+  fieldRow.forEach((c,i)=>{
+    if(/^IN$/i.test((c||'').toString().trim()))inCols.push(i);
+  });
+  if(!inCols.length)return [];
+
   const result=[];
-  bands.forEach(({col,name},bi)=>{
-    // Leer cabeceras del bloque
-    const fields=[];
-    for(let f=0;f<BLOCK;f++){
-      fields.push((fieldRow[col+f]||'').toString().trim().toUpperCase());
+  inCols.forEach((inCol,bi)=>{
+    const blockEnd=inCols[bi+1]!==undefined?inCols[bi+1]:fieldRow.length;
+    const findCol=(names)=>{
+      for(let c=inCol;c<blockEnd;c++){
+        const v=(fieldRow[c]||'').toString().trim().toUpperCase();
+        if(names.includes(v))return c;
+      }
+      return -1;
+    };
+    const instPos=findCol(['INST','INSTRUMENT','INSTRUMENTO']);
+    const micPos=findCol(['MIC']);
+    const standsPos=findCol(['STANDS','STAND']);
+    const sboxPos=findCol(['S.BOX','SBOX','S BOX']);
+    const infoPos=findCol(['INFO']);
+    // Nombre de banda
+    let name='';
+    for(let c=inCol;c<blockEnd;c++){
+      const v=(nameRow[c]||'').toString().trim();
+      if(v){name=v;break;}
     }
-    const inPos=fields.findIndex(f=>f==='IN'||f==='CH');
-    const instPos=fields.findIndex(f=>f==='INST'||f.includes('INST'));
-    const micPos=fields.findIndex(f=>f==='MIC');
-    const standsPos=fields.findIndex(f=>f==='STANDS'||f==='STAND');
-    const sboxPos=fields.findIndex(f=>f==='S.BOX'||f==='SBOX'||f==='S BOX');
-    const infoPos=fields.findIndex(f=>f==='INFO');
+    if(!name)name=`Banda ${bi+1}`;
+
     const channels=[];
     for(let r=hRow+1;r<rows.length;r++){
       const row=rows[r]||[];
-      const ch=inPos>=0?(row[col+inPos]||'').toString().trim():'';
+      const ch=(row[inCol]||'').toString().trim();
       if(!ch)continue;
       channels.push({
         ch,
-        inst:instPos>=0?(row[col+instPos]||'').toString().trim():'',
-        mic:micPos>=0?(row[col+micPos]||'').toString().trim():'',
-        stands:standsPos>=0?(row[col+standsPos]||'').toString().trim():'',
-        sbox:sboxPos>=0?(row[col+sboxPos]||'').toString().trim():'',
-        info:infoPos>=0?(row[col+infoPos]||'').toString().trim():'',
+        inst:instPos>=0?(row[instPos]||'').toString().trim():'',
+        mic:micPos>=0?(row[micPos]||'').toString().trim():'',
+        stands:standsPos>=0?(row[standsPos]||'').toString().trim():'',
+        sbox:sboxPos>=0?(row[sboxPos]||'').toString().trim():'',
+        info:infoPos>=0?(row[infoPos]||'').toString().trim():'',
       });
     }
     result.push({idx:bi+1,name,channels});
@@ -906,39 +914,51 @@ function parseInputList(rows){
 */
 function parseMonitores(rows){
   if(!rows||rows.length<2)return [];
-  // Buscar la fila que contiene "BANDA N" (puede no ser la fila 0 si hay marcador ESCENARIO arriba)
-  let headIdx=rows.findIndex(r=>r&&r.some(c=>/BANDA\s*\d+/i.test((c||'').toString())));
-  if(headIdx<0)return [];
-  const headRow=rows[headIdx]||[];
-  const bands=[];
-  headRow.forEach((c,i)=>{
-    if(/BANDA\s*\d+/i.test((c||'').toString())){
-      bands.push({col:i,name:(c||'').toString().trim()});
-    }
-  });
-  if(!bands.length)return [];
+  // Buscar la fila de cabeceras: la que contiene varios "OUT"
+  let fieldIdx=rows.findIndex(r=>r&&r.filter(c=>/^OUT$/i.test((c||'').toString().trim())).length>=1);
+  if(fieldIdx<0)return [];
+  const fieldRow=rows[fieldIdx]||[];
+  // La fila de nombres de banda es la inmediatamente superior
+  const nameRow=rows[fieldIdx-1]||[];
+  const dataStart=fieldIdx+1;
 
-  // fila de cabeceras = la siguiente a la de bandas
-  const fieldRow=rows[headIdx+1]||[];
-  const dataStart=headIdx+2;
+  // Detectar bloques por la posicion de cada "OUT" en la fila de cabeceras
+  const outCols=[];
+  fieldRow.forEach((c,i)=>{
+    if(/^OUT$/i.test((c||'').toString().trim()))outCols.push(i);
+  });
+  if(!outCols.length)return [];
+
   const result=[];
-  bands.forEach(({col,name},bi)=>{
-    const nextCol=bands[bi+1]?bands[bi+1].col:headRow.length;
-    const width=nextCol-col;
-    const fields=[];
-    for(let f=0;f<width;f++) fields.push((fieldRow[col+f]||'').toString().trim().toUpperCase());
-    const outPos=fields.findIndex(f=>f==='OUT');
-    const patchPos=fields.findIndex(f=>f==='PATCH');
-    const monPos=fields.findIndex(f=>f==='MONITOR'||f==='MON');
-    const notasPos=fields.findIndex(f=>f==='NOTAS'||f==='NOTES');
+  outCols.forEach((outCol,bi)=>{
+    const blockEnd=outCols[bi+1]!==undefined?outCols[bi+1]:fieldRow.length;
+    // Posiciones de cada campo dentro del bloque
+    const findCol=(names)=>{
+      for(let c=outCol;c<blockEnd;c++){
+        const v=(fieldRow[c]||'').toString().trim().toUpperCase();
+        if(names.includes(v))return c;
+      }
+      return -1;
+    };
+    const patchPos=findCol(['PATCH']);
+    const monPos=findCol(['MONITOR','MON']);
+    const notasPos=findCol(['NOTAS','NOTES']);
+    // Nombre de banda: buscar en nameRow dentro del rango del bloque
+    let name='';
+    for(let c=outCol;c<blockEnd;c++){
+      const v=(nameRow[c]||'').toString().trim();
+      if(v){name=v;break;}
+    }
+    if(!name)name=`Banda ${bi+1}`;
+
     const outs=[];
     for(let r=dataStart;r<rows.length;r++){
       const row=rows[r]||[];
-      const out=outPos>=0?(row[col+outPos]||'').toString().trim():'';
-      const patch=patchPos>=0?(row[col+patchPos]||'').toString().trim():'';
-      const monitor=monPos>=0?(row[col+monPos]||'').toString().trim():'';
-      const notas=notasPos>=0?(row[col+notasPos]||'').toString().trim():'';
-      if(out||(patch&&monitor)) outs.push({out,patch,monitor,notas});
+      const out=(row[outCol]||'').toString().trim();
+      const patch=patchPos>=0?(row[patchPos]||'').toString().trim():'';
+      const monitor=monPos>=0?(row[monPos]||'').toString().trim():'';
+      const notas=notasPos>=0?(row[notasPos]||'').toString().trim():'';
+      if(out||patch||monitor||notas) outs.push({out,patch,monitor,notas});
     }
     result.push({idx:bi+1,name,outs});
   });
@@ -1611,15 +1631,16 @@ function sboxCell(v){
 
 function sumaInputsTable(inputs){
   if(!inputs||!inputs.length)return '<div class="empty-state" style="padding:24px"><p>Sin canales en este escenario.</p></div>';
-  // Canal mas alto ocupado entre todas las bandas (por numero de CH, no por count)
+  // Canal mas alto que tiene contenido real (instrumento, mic, stand o sbox)
   let maxChNum=0;
   inputs.forEach(b=>{
     b.channels.forEach(ch=>{
-      const n=parseInt(ch.ch);
-      if(!isNaN(n)&&n>maxChNum)maxChNum=n;
+      const hasContent=ch.inst||ch.mic||ch.stands||ch.sbox||ch.info;
+      if(hasContent){
+        const n=parseInt(ch.ch);
+        if(!isNaN(n)&&n>maxChNum)maxChNum=n;
+      }
     });
-    // tambien considerar el count por si los CH no son numericos
-    if(b.channels.length>maxChNum)maxChNum=Math.max(maxChNum,b.channels.length);
   });
   // Redondear al multiplo de 8 superior (minimo 8)
   const rows=Math.max(8,Math.ceil(maxChNum/8)*8);
@@ -1685,14 +1706,16 @@ function renderSuma(){
 /* ── MONITORES ── */
 function monitoresTable(mons){
   if(!mons||!mons.length)return '<div class="empty-state" style="padding:24px"><p>Sin salidas en este escenario.</p></div>';
-  // Salida mas alta ocupada entre todas las bandas
+  // Salida mas alta que tiene contenido real (patch, monitor o notas)
   let maxOutNum=0;
   mons.forEach(m=>{
     m.outs.forEach(o=>{
-      const n=parseInt(o.out);
-      if(!isNaN(n)&&n>maxOutNum)maxOutNum=n;
+      const hasContent=o.patch||o.monitor||o.notas;
+      if(hasContent){
+        const n=parseInt(o.out);
+        if(!isNaN(n)&&n>maxOutNum)maxOutNum=n;
+      }
     });
-    if(m.outs.length>maxOutNum)maxOutNum=Math.max(maxOutNum,m.outs.length);
   });
   const rowsCount=Math.max(8,Math.ceil(maxOutNum/8)*8);
 
