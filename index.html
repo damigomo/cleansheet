@@ -523,10 +523,29 @@ function handleAuthExpired(){
   showView('view-login');
 }
 async function sheetMeta(id){
+  if(VIEWER_MODE) return sheetMetaPublic(id);
   const url=`https://sheets.googleapis.com/v4/spreadsheets/${id}?fields=sheets.properties.title`;
   const r=await fetch(url,{headers:{Authorization:`Bearer ${accessToken}`}});
   if(!r.ok)throw new Error('Meta '+r.status);
   return (await r.json()).sheets.map(s=>s.properties.title);
+}
+/* Metadata publica: usar gviz tambien para listar pestañas via el feed de visualizacion */
+async function sheetMetaPublic(id){
+  const url=`https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:json`;
+  const r=await fetch(url);
+  if(!r.ok)throw new Error('No se puede acceder a la hoja. Comprueba que está compartida como "Cualquiera con el enlace".');
+  // gviz sin sheet= devuelve la primera pestaña, no la lista. Usamos el endpoint de export para listar:
+  // Alternativa: pedir el HTML público y extraer nombres de pestañas del feed worksheets
+  const feedUrl=`https://spreadsheets.google.com/feeds/worksheets/${id}/public/basic?alt=json`;
+  try{
+    const fr=await fetch(feedUrl);
+    if(fr.ok){
+      const fd=await fr.json();
+      const entries=fd.feed.entry||[];
+      return entries.map(e=>e.title.$t);
+    }
+  }catch(e){}
+  throw new Error('No se pudieron listar las pestañas. Verifica que la hoja esté compartida públicamente.');
 }
 async function driveSearch(q){
   const url=`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name,mimeType,modifiedTime)&pageSize=50`;
@@ -624,9 +643,9 @@ function findTab(tabs,names){
 
 function parseProject(data){
   const {tabs,raw}=data;
-  const P={tabs,raw,info:{},horarios:[],overall:null,inputs:[],monitores:[],personal:null,escenarios:[],numBandas:0};
+  const P={tabs,raw,info:{},horarios:[],overall:null,inputs:[],monitores:[],personal:null,escenarios:[],numBandas:0,days:[],dayTabs:{}};
 
-  // INFO — guardar con clave original y uppercase para busqueda flexible
+  // INFO
   const infoTab=findTab(tabs,['INFO','CONFIG']);
   if(infoTab&&raw[infoTab]){
     raw[infoTab].forEach(row=>{
@@ -639,7 +658,6 @@ function parseProject(data){
       }
     });
   }
-  // Escenarios desde INFO
   let escStr=P.info['ESCENARIOS']||'';
   if(escStr){
     if(/^\d+$/.test(escStr.trim())){
@@ -650,7 +668,7 @@ function parseProject(data){
     }
   }
 
-  // HORARIOS
+  // HORARIOS — una sola pestaña, gestiona dias y escenarios internamente
   const horTab=findTab(tabs,['HORARIOS','HORARIO']);
   if(horTab&&raw[horTab]){
     const parsed=parseHorarios(raw[horTab]);
@@ -658,48 +676,92 @@ function parseProject(data){
     P.horHeader=parsed.header;
     P.horTimeCols=parsed.timeCols||[];
     P.horarios=parsed.days.flatMap(d=>(d.stages||[]).flatMap(s=>s.acts||[]));
-    // Escenarios desde los bloques detectados
     const stageNames=[...new Set(parsed.days.flatMap(d=>(d.stages||[]).map(s=>s.name)))];
     if(!P.escenarios.length&&stageNames.length) P.escenarios=stageNames;
   }
 
-  // OVERALL — mantener todas las filas para grid completo
-  const ovTab=findTab(tabs,['OVERALL']);
-  if(ovTab&&raw[ovTab]){
-    const allRows=(raw[ovTab]||[]);
-    // Buscar fila cabecera: la que tiene "BANDA" en alguna celda (no la primera col)
-    let headIdx=allRows.findIndex(r=>r&&r.slice(1).some(c=>/BANDA/i.test(c||'')));
-    if(headIdx<0)headIdx=0;
-    const head=allRows[headIdx]||[];
-    const bandas=head.slice(1).map(b=>(b||'').trim()).filter(Boolean);
-    P.numBandas=Math.max(P.numBandas,bandas.length);
-    const dataRows=allRows.slice(headIdx+1)
-      .map(r=>({cat:(r[0]||'').trim(),vals:bandas.map((_,bi)=>(r[bi+1]||'').trim())}))
-      .filter(row=>row.cat); // mantener filas con categoria aunque valores vacios
-    P.overall={bandas,rows:dataRows};
-  }
-
-  // INPUT LIST / SUMA
-  const inTab=findTab(tabs,['INPUT','SUMA','INPUTLIST']);
-  if(inTab&&raw[inTab]){
-    P.inputsRaw=raw[inTab];
-    P.inputs=parseInputList(raw[inTab]);
-    P.numBandas=Math.max(P.numBandas,P.inputs.length);
-  }
-
-  // MONITORES
-  const monTab=findTab(tabs,['MONITORES','MONITOR','OUTPUT']);
-  if(monTab&&raw[monTab]){
-    P.monitores=parseMonitores(raw[monTab]);
-  }
-
-  // PERSONAL
+  // PERSONAL — una sola pestaña, gestiona dias y escenarios internamente
   const persTab=findTab(tabs,['PERSONAL','TURNOS']);
   if(persTab&&raw[persTab]){
-    P.personal=parsePersonal(raw[persTab]);
+    P.personal=parsePersonalMultiDay(raw[persTab]);
+  }
+
+  // ── Detectar pestañas con sufijo de dia: "OVERALL 10", "SUMA 10", "MONITORES 10"... ──
+  const dayGroups={}; // {10:{overall:'OVERALL 10', suma:'SUMA 10', monitores:'MONITORES 10'}}
+  tabs.forEach(t=>{
+    const m=t.match(/^(OVERALL|SUMA|MONITORES)\s*(\d+)$/i);
+    if(m){
+      const type=m[1].toUpperCase();
+      const day=m[2];
+      if(!dayGroups[day])dayGroups[day]={};
+      if(type==='OVERALL')dayGroups[day].overall=t;
+      if(type==='SUMA')dayGroups[day].suma=t;
+      if(type==='MONITORES')dayGroups[day].monitores=t;
+    }
+  });
+
+  const dayKeys=Object.keys(dayGroups).sort((a,b)=>parseInt(a)-parseInt(b));
+
+  if(dayKeys.length){
+    // Estructura por dias con sufijo numerico
+    P.days=dayKeys.map(dk=>{
+      const g=dayGroups[dk];
+      const dayObj={key:dk,label:matchDayLabel(P.horariosDays,dk)||`Día ${dk}`,overall:null,inputs:[],monitores:[]};
+
+      if(g.overall&&raw[g.overall]) dayObj.overall=parseOverallMultiStage(raw[g.overall]);
+      if(g.suma&&raw[g.suma]) dayObj.inputs=parseInputListMultiStage(raw[g.suma]);
+      if(g.monitores&&raw[g.monitores]) dayObj.monitores=parseMonitoresMultiStage(raw[g.monitores]);
+
+      return dayObj;
+    });
+
+    // numBandas global = max entre todos los dias
+    P.numBandas=Math.max(0,...P.days.map(d=>{
+      const fromOverall=d.overall?.stages?.reduce((m,s)=>Math.max(m,(s.bandas||[]).length),0)||0;
+      const fromInputs=d.inputs?.reduce((m,s)=>Math.max(m,(s.bandas||[]).length),0)||0;
+      return Math.max(fromOverall,fromInputs);
+    }));
+
+    // Compatibilidad: primer dia como "overall/inputs/monitores" planos (primer escenario)
+    if(P.days[0]){
+      P.overall=P.days[0].overall?.stages?.[0]?P.days[0].overall.stages[0]:null;
+      P.inputs=P.days[0].inputs?.[0]?.bandas||[];
+      P.monitores=P.days[0].monitores?.[0]?.bandas||[];
+    }
+  } else {
+    // FALLBACK: estructura antigua sin sufijo de dia (compatibilidad hacia atras)
+    const ovTab=findTab(tabs,['OVERALL']);
+    if(ovTab&&raw[ovTab]){
+      const allRows=(raw[ovTab]||[]);
+      let headIdx=allRows.findIndex(r=>r&&r.slice(1).some(c=>/BANDA/i.test(c||'')));
+      if(headIdx<0)headIdx=0;
+      const head=allRows[headIdx]||[];
+      const bandas=head.slice(1).map(b=>(b||'').trim()).filter(Boolean);
+      P.numBandas=Math.max(P.numBandas,bandas.length);
+      const dataRows=allRows.slice(headIdx+1)
+        .map(r=>({cat:(r[0]||'').trim(),vals:bandas.map((_,bi)=>(r[bi+1]||'').trim())}))
+        .filter(row=>row.cat);
+      P.overall={bandas,rows:dataRows};
+    }
+    const inTab=findTab(tabs,['INPUT','SUMA','INPUTLIST']);
+    if(inTab&&raw[inTab]){
+      P.inputs=parseInputList(raw[inTab]);
+      P.numBandas=Math.max(P.numBandas,P.inputs.length);
+    }
+    const monTab=findTab(tabs,['MONITORES','MONITOR','OUTPUT']);
+    if(monTab&&raw[monTab]){
+      P.monitores=parseMonitores(raw[monTab]);
+    }
   }
 
   return P;
+}
+
+/* Empareja el dia numerico (ej "10") con el nombre real del dia en HORARIOS (ej "VIERNES 10") */
+function matchDayLabel(horariosDays,dayKey){
+  if(!horariosDays)return null;
+  const found=horariosDays.find(d=>d.name&&d.name.includes(dayKey));
+  return found?found.name:null;
 }
 
 /* ══ PARSERS REALES basados en estructura visual de la plantilla ══ */
@@ -936,6 +998,146 @@ function parsePersonal(rows){
   return Object.keys(result).length?result:null;
 }
 
+/* ══ PARSERS MULTI-DIA / MULTI-ESCENARIO ══ */
+
+/* OVERALL por dia: bloques de escenario lado a lado, separados por col vacia.
+   Cada bloque: fila0 = nombres de banda (col0 vacio + banda1, banda2...)
+   filas siguientes = categorias (SHOW, ARRIVAL... luego SOUND/LIGHTNING/VIDEO/OTHERS como separadores)
+*/
+function parseOverallMultiStage(rows){
+  if(!rows||!rows.length)return {stages:[]};
+  // Detectar inicio de cada bloque de escenario: fila que tiene "ESCENARIO N" en columna 0 (texto vertical) 
+  // o simplemente dividir por columnas vacias completas
+  const maxCols=Math.max(...rows.map(r=>r.length));
+  // Buscar columnas completamente vacias (separadores entre escenarios)
+  const colEmpty=[];
+  for(let col=0;col<maxCols;col++){
+    const allEmpty=rows.every(r=>!(r[col]||'').toString().trim());
+    colEmpty.push(allEmpty);
+  }
+  // Agrupar columnas en bloques contiguos no vacios
+  const blocks=[];
+  let curStart=-1;
+  for(let col=0;col<maxCols;col++){
+    if(!colEmpty[col]&&curStart<0)curStart=col;
+    if(colEmpty[col]&&curStart>=0){blocks.push([curStart,col]);curStart=-1;}
+  }
+  if(curStart>=0)blocks.push([curStart,maxCols]);
+
+  const stages=blocks.map((([start,end],bi)=>{
+    // Dentro del bloque: col start = etiquetas de fila (SHOW, ARRIVAL...), start+1.. = bandas
+    const bandRow=rows[0]||[];
+    const bandas=[];
+    for(let c=start+1;c<end;c++){
+      const name=(bandRow[c]||'').toString().trim();
+      if(name)bandas.push(name);
+    }
+    const dataRows=[];
+    for(let r=1;r<rows.length;r++){
+      const cat=(rows[r][start]||'').toString().trim();
+      if(!cat)continue;
+      const vals=bandas.map((_,i)=>(rows[r][start+1+i]||'').toString().trim());
+      dataRows.push({cat,vals});
+    }
+    return {name:`Escenario ${bi+1}`,bandas,rows:dataRows};
+  }));
+
+  return {stages};
+}
+
+/* SUMA por dia: bloques de escenario, cada uno con su propia fila "ESCENARIO N" arriba,
+   luego dentro: nombres de banda cada 6 columnas (igual que parseInputList de un solo escenario) */
+function parseInputListMultiStage(rows){
+  if(!rows||!rows.length)return [];
+  const maxCols=Math.max(...rows.map(r=>r.length));
+  // Buscar filas que marcan inicio de escenario: col0 tiene "ESCENARIO N"
+  const stageRowIdx=[];
+  rows.forEach((r,ri)=>{
+    if(/ESCENARIO\s*\d+/i.test((r[0]||'').toString())) stageRowIdx.push(ri);
+  });
+
+  if(!stageRowIdx.length){
+    // Sin division por escenario explicita: tratar todo como Escenario 1
+    return [{name:'Escenario 1',bandas:parseInputList(rows)}];
+  }
+
+  const stages=[];
+  stageRowIdx.forEach((startRow,si)=>{
+    const endRow=stageRowIdx[si+1]!==undefined?stageRowIdx[si+1]:rows.length;
+    const stageName=(rows[startRow][0]||`Escenario ${si+1}`).toString().trim();
+    // Sub-tabla de este escenario, columnas desde 1 (col0 es la etiqueta vertical de escenario)
+    const subRows=rows.slice(startRow,endRow).map(r=>r.slice(1));
+    const bandas=parseInputList(subRows);
+    stages.push({name:stageName,bandas});
+  });
+  return stages;
+}
+
+/* MONITORES por dia: misma logica que SUMA pero con estructura de Monitores */
+function parseMonitoresMultiStage(rows){
+  if(!rows||!rows.length)return [];
+  const stageRowIdx=[];
+  rows.forEach((r,ri)=>{
+    if(/ESCENARIO\s*\d+/i.test((r[0]||'').toString())) stageRowIdx.push(ri);
+  });
+
+  if(!stageRowIdx.length){
+    return [{name:'Escenario 1',bandas:parseMonitores(rows)}];
+  }
+
+  const stages=[];
+  stageRowIdx.forEach((startRow,si)=>{
+    const endRow=stageRowIdx[si+1]!==undefined?stageRowIdx[si+1]:rows.length;
+    const stageName=(rows[startRow][0]||`Escenario ${si+1}`).toString().trim();
+    const subRows=rows.slice(startRow,endRow).map(r=>r.slice(1));
+    const bandas=parseMonitores(subRows);
+    stages.push({name:stageName,bandas});
+  });
+  return stages;
+}
+
+/* PERSONAL multi-dia: estructura real vista en capturas:
+   Col A = DIA (texto vertical, ej "VIERNES 10"), Col B = ESCENARIO (texto vertical)
+   Col C = ROL/N.TECNICO/CONTACTO/OTROS
+   Luego bloques TURNO 1 / TURNO 2 con columnas de roles (STAGE MANAGER, FOH, MON, ESCENARIO 1, ESCENARIO 2, ILUMINACION 1, ILUMINACION 2...)
+*/
+function parsePersonalMultiDay(rows){
+  if(!rows||!rows.length)return null;
+  const result={}; // {dia:{escenario:{turno:{roles,tecnicos,contactos,otros}}}}
+  let curDia='',curEsc='',curTurno='';
+
+  rows.forEach(row=>{
+    const colA=(row[0]||'').toString().trim();
+    const colB=(row[1]||'').toString().trim();
+    const colC=(row[2]||'').toString().trim().toUpperCase();
+    const rest=row.slice(3).map(c=>(c||'').toString().trim());
+    const allVals=row.map(c=>(c||'').toString().trim());
+
+    if(colA) curDia=colA;
+    if(colB) curEsc=colB;
+
+    const turnoCell=allVals.find(c=>/TURNO\s*\d+/i.test(c));
+    if(turnoCell){
+      curTurno=turnoCell;
+      if(!result[curDia])result[curDia]={};
+      if(!result[curDia][curEsc])result[curDia][curEsc]={};
+      if(!result[curDia][curEsc][curTurno])result[curDia][curEsc][curTurno]={roles:[],tecnicos:[],contactos:[],otros:[]};
+      return;
+    }
+
+    if(!curDia||!curEsc||!curTurno)return;
+    const block=result[curDia]?.[curEsc]?.[curTurno];
+    if(!block)return;
+
+    if(colC==='ROL')block.roles=rest.filter(Boolean);
+    else if(colC.includes('TECNICO'))block.tecnicos=rest;
+    else if(colC==='CONTACTO')block.contactos=rest;
+    else if(colC==='OTROS')block.otros=rest;
+  });
+
+  return Object.keys(result).length?result:null;
+}
+
 /* ── SIDEBAR ── */
 function renderSidebar(){
   const nav=document.getElementById('nav-sections');
@@ -1144,43 +1346,102 @@ const OVERALL_SECTIONS={
   'SOUND':      {label:'Sound',     color:'#4f8ef7'},
   'SONIDO':     {label:'Sound',     color:'#4f8ef7'},
   'LIGHTNING':  {label:'Lightning', color:'#f6c046'},
+  'LIGHTING':   {label:'Lightning', color:'#f6c046'},
   'ILUMINACION':{label:'Lightning', color:'#f6c046'},
   'VIDEO':      {label:'Video',     color:'#e26ba6'},
   'OTHERS':     {label:'Others',    color:'#8890a4'},
   'OTROS':      {label:'Others',    color:'#8890a4'},
 };
 
-function renderOverall(){
-  const ov=projectData.overall;
-  if(!ov||!ov.bandas.length)return emptyMsg('Overall','Añade datos a la hoja OVERALL.','grid');
-
-  const head=`<tr>
-    <th class="cat-col" style="min-width:160px;position:sticky;left:0;z-index:2">&nbsp;</th>
-    ${ov.bandas.map(b=>`<th class="band-head" style="min-width:140px">${esc(b)}</th>`).join('')}
-  </tr>`;
-
+/* Tabla overall de un escenario individual */
+function overallStageTable(stage){
+  if(!stage||!stage.bandas.length)return '<div class="empty-state" style="padding:24px"><p>Sin bandas en este escenario.</p></div>';
+  const head=`<tr><th class="cat-col" style="min-width:140px;position:sticky;left:0;z-index:2">&nbsp;</th>${stage.bandas.map(b=>`<th class="band-head" style="min-width:130px">${esc(b)}</th>`).join('')}</tr>`;
   let body='';
-  ov.rows.forEach(row=>{
+  stage.rows.forEach(row=>{
     if(!row.cat&&row.vals.every(v=>!v))return;
     const catUp=(row.cat||'').toUpperCase().trim();
     const sec=OVERALL_SECTIONS[catUp];
     if(sec){
-      body+=`<tr><td colspan="${1+ov.bandas.length}" style="padding:8px 14px;background:${sec.color}18;color:${sec.color};font-weight:700;font-size:11px;letter-spacing:.1em;text-transform:uppercase;border-top:2px solid ${sec.color}55;position:sticky;left:0">
-        ${esc(sec.label)}</td></tr>`;
+      body+=`<tr><td colspan="${1+stage.bandas.length}" style="padding:8px 14px;background:${sec.color}18;color:${sec.color};font-weight:700;font-size:11px;letter-spacing:.1em;text-transform:uppercase;border-top:2px solid ${sec.color}55;position:sticky;left:0">${esc(sec.label)}</td></tr>`;
     } else {
-      body+=`<tr>
-        <td class="cat" style="position:sticky;left:0;background:var(--panel2)">${esc(row.cat)||'&nbsp;'}</td>
-        ${row.vals.map(v=>`<td>${v?esc(v):'<span style="color:var(--tx3)">·</span>'}</td>`).join('')}
-      </tr>`;
+      body+=`<tr><td class="cat" style="position:sticky;left:0;background:var(--panel2)">${esc(row.cat)||'&nbsp;'}</td>${row.vals.map(v=>`<td>${v?esc(v):'<span style="color:var(--tx3)">·</span>'}</td>`).join('')}</tr>`;
     }
   });
-
-  return `<div class="sec-title">Overall</div>
-    <div class="sec-sub">Vista técnica · ${ov.bandas.length} banda${ov.bandas.length!==1?'s':''}</div>
-    <div class="overall-wrap"><table class="overall-table"><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
+  return `<div class="overall-wrap"><table class="overall-table"><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
 }
 
-/* ── SUMA (input list por banda, tabla completa) ── */
+function renderOverall(){
+  const hasDays=projectData.days&&projectData.days.length;
+  if(!hasDays&&!projectData.overall)return emptyMsg('Overall','Añade datos a la hoja OVERALL.','grid');
+
+  let html=`<div class="sec-title">Overall</div><div class="sec-sub">Vista técnica por día y escenario</div>`;
+
+  if(hasDays){
+    // Selector de dia
+    html+=dayStageSelector('ov');
+    const day=projectData.days[ovActiveDay===-1?0:ovActiveDay]||projectData.days[0];
+    if(!day||!day.overall||!day.overall.stages.length)return html+emptyMsg('','Sin datos para este día.','grid');
+
+    if(ovActiveStage===-1){
+      // Todos los escenarios apilados
+      day.overall.stages.forEach(stage=>{
+        html+=`<div style="margin-bottom:24px">
+          <div style="font-size:13px;font-weight:700;color:var(--accent);margin-bottom:8px;padding-left:2px">${esc(stage.name)}</div>
+          ${overallStageTable(stage)}
+        </div>`;
+      });
+    } else {
+      const stage=day.overall.stages[ovActiveStage];
+      html+=overallStageTable(stage);
+    }
+  } else {
+    // Fallback formato antiguo (sin dias)
+    html+=overallStageTable(projectData.overall);
+  }
+
+  return html;
+}
+
+/* Selector compartido: Día (arriba) + Escenario (debajo), "Todos" siempre primero */
+function dayStageSelector(prefix){
+  const days=projectData.days||[];
+  if(!days.length)return '';
+  const activeDay=prefix==='ov'?ovActiveDay:(prefix==='su'?suActiveDay:monActiveDay);
+  const activeStage=prefix==='ov'?ovActiveStage:(prefix==='su'?suActiveStage:monActiveStage);
+
+  let html=`<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:14px">
+    <span class="filter-label">Día</span>`;
+  days.forEach((d,i)=>{
+    html+=`<button class="filter-btn ${activeDay===i?'on':''}" onclick="setDayStage('${prefix}',${i},-1)">${esc(d.label)}</button>`;
+  });
+  html+=`</div>`;
+
+  const curDay=days[activeDay===-1?0:activeDay];
+  const stages=curDay?.overall?.stages||curDay?.inputs||curDay?.monitores||[];
+  if(stages.length>1){
+    html+=`<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:18px">
+      <span class="filter-label">Escenario</span>
+      <button class="filter-btn ${activeStage===-1?'on':''}" onclick="setDayStage('${prefix}',${activeDay===-1?0:activeDay},-1)">Todos</button>`;
+    stages.forEach((s,i)=>{
+      html+=`<button class="filter-btn ${activeStage===i?'on':''}" onclick="setDayStage('${prefix}',${activeDay===-1?0:activeDay},${i})">${esc(s.name)}</button>`;
+    });
+    html+=`</div>`;
+  }
+  return html;
+}
+
+let ovActiveDay=0, ovActiveStage=-1;
+let suActiveDay=0, suActiveStage=-1;
+let monActiveDay=0, monActiveStage=-1;
+
+function setDayStage(prefix,day,stage){
+  if(prefix==='ov'){ovActiveDay=day;ovActiveStage=stage;showSection('overall');}
+  if(prefix==='su'){suActiveDay=day;suActiveStage=stage;activeBanda=-1;showSection('suma');}
+  if(prefix==='mon'){monActiveDay=day;monActiveStage=stage;activeBanda=-1;showSection('monitores');}
+}
+
+/* ── SUMA ── */
 const SBOX_COLORS={
   'A':'#4f8ef7','B':'#4cc28a','C':'#f47b7b','D':'#f6c046','E':'#9b7be8','DIRECT':'#2a2a2a','DIRECTO':'#2a2a2a','DI':'#2a2a2a',
 };
@@ -1192,217 +1453,180 @@ function sboxCell(v){
   return esc(v);
 }
 
-function renderSuma(){
-  const inputs=projectData.inputs;
-  if(!inputs||!inputs.length)return emptyMsg('Suma','Añade datos a la hoja SUMA.','sum');
-
-  // Default: vista todas (activeBanda === -1)
-  const curBanda=activeBanda===undefined?-1:activeBanda;
-
-  let tabs='<div class="bandas-tabs">';
-  tabs+=`<button class="banda-tab ${curBanda===-1?'on':''}" onclick="setBandaSuma(-1)">Todas</button>`;
+function sumaInputsTable(inputs){
+  if(!inputs||!inputs.length)return '<div class="empty-state" style="padding:24px"><p>Sin canales en este escenario.</p></div>';
+  const maxCh=Math.max(...inputs.map(b=>b.channels.length));
+  const cols=['CH','INST','MIC','STANDS','S.BOX','INFO'];
+  let head=`<tr>`;
   inputs.forEach((b,i)=>{
-    const name=b.name||projectData.overall?.bandas[b.idx-1]||`Banda ${b.idx}`;
-    tabs+=`<button class="banda-tab ${i===curBanda?'on':''}" onclick="setBandaSuma(${i})">${esc(name)}</button>`;
+    const col=STAGE_COLORS[i%STAGE_COLORS.length];
+    head+=`<th colspan="${cols.length}" style="background:${col}22;color:${col};border-bottom:2px solid ${col};text-align:center">${esc(b.name||`Banda ${b.idx}`)}</th>`;
   });
-  tabs+='</div>';
-
-  let content='';
-
-  if(curBanda===-1){
-    // Vista horizontal: todas las bandas en columnas
-    // Encontrar max canales
-    const maxCh=Math.max(...inputs.map(b=>b.channels.length));
-    const cols=['CH','INST','MIC','STANDS','S.BOX','INFO'];
-
-    let head=`<tr>`;
-    inputs.forEach((b,i)=>{
-      const name=b.name||projectData.overall?.bandas[b.idx-1]||`Banda ${b.idx}`;
-      const col=STAGE_COLORS[i%STAGE_COLORS.length];
-      head+=`<th colspan="${cols.length}" style="background:${col}22;color:${col};border-bottom:2px solid ${col};text-align:center">${esc(name)}</th>`;
+  head+=`</tr><tr>`;
+  inputs.forEach(()=>{cols.forEach(col=>{head+=`<th style="font-size:10px;white-space:nowrap">${esc(col)}</th>`;});});
+  head+=`</tr>`;
+  let body='';
+  for(let ri=0;ri<maxCh;ri++){
+    body+=`<tr>`;
+    inputs.forEach(b=>{
+      const ch=b.channels[ri];
+      if(ch){
+        body+=`<td class="ch">${esc(ch.ch)}</td><td class="inst" style="white-space:nowrap">${esc(ch.inst)||'·'}</td><td style="white-space:nowrap">${esc(ch.mic)||'·'}</td><td>${esc(ch.stands)||'·'}</td><td>${sboxCell(ch.sbox)}</td><td style="color:var(--tx2);font-family:inherit;font-size:11px">${esc(ch.info)||''}</td>`;
+      } else {
+        body+=`<td colspan="${cols.length}"></td>`;
+      }
     });
-    head+=`</tr><tr>`;
-    inputs.forEach(()=>{
-      cols.forEach(col=>{ head+=`<th style="font-size:10px;white-space:nowrap">${esc(col)}</th>`; });
-    });
-    head+=`</tr>`;
+    body+=`</tr>`;
+  }
+  return `<div style="overflow-x:auto"><table class="io-table" style="min-width:max-content"><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
+}
 
-    let body='';
-    for(let ri=0;ri<maxCh;ri++){
-      body+=`<tr>`;
-      inputs.forEach(b=>{
-        const ch=b.channels[ri];
-        if(ch){
-          body+=`<td class="ch">${esc(ch.ch)}</td>`;
-          body+=`<td class="inst" style="white-space:nowrap">${esc(ch.inst)||'·'}</td>`;
-          body+=`<td style="white-space:nowrap">${esc(ch.mic)||'·'}</td>`;
-          body+=`<td>${esc(ch.stands)||'·'}</td>`;
-          body+=`<td>${sboxCell(ch.sbox)}</td>`;
-          body+=`<td style="color:var(--tx2);font-family:inherit;font-size:11px">${esc(ch.info)||''}</td>`;
-        } else {
-          body+=`<td colspan="${cols.length}" style="color:var(--tx3)"></td>`;
-        }
+function renderSuma(){
+  const hasDays=projectData.days&&projectData.days.length;
+  if(!hasDays&&!projectData.inputs.length)return emptyMsg('Suma','Añade datos a la hoja SUMA.','sum');
+
+  let html=`<div class="sec-title">Suma · Input List</div><div class="sec-sub">Canales por día y escenario</div>`;
+
+  if(hasDays){
+    html+=dayStageSelector('su');
+    const day=projectData.days[suActiveDay===-1?0:suActiveDay]||projectData.days[0];
+    if(!day||!day.inputs.length)return html+emptyMsg('','Sin datos de input list para este día.','sum');
+
+    if(suActiveStage===-1){
+      day.inputs.forEach(stage=>{
+        html+=`<div style="margin-bottom:24px">
+          <div style="font-size:13px;font-weight:700;color:var(--accent);margin-bottom:8px">${esc(stage.name)}</div>
+          ${sumaInputsTable(stage.bandas)}
+        </div>`;
       });
-      body+=`</tr>`;
+    } else {
+      const stage=day.inputs[suActiveStage];
+      html+=sumaInputsTable(stage?.bandas);
     }
-
-    content=`<div style="overflow-x:auto"><table class="io-table" style="min-width:max-content"><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
-
   } else {
-    // Vista individual
-    const b=inputs[curBanda];
-    if(!b)return tabs+emptyMsg('','Banda no encontrada.','file');
-    const name=b.name||projectData.overall?.bandas[b.idx-1]||`Banda ${b.idx}`;
-    content=`<div class="io-block">
-      <div class="io-head"><div class="io-name">${esc(name)}</div><div class="io-meta">${b.channels.length} canales</div></div>
-      <table class="io-table">
-        <thead><tr><th style="width:36px">CH</th><th>Instrumento</th><th>Micro / DI</th><th>Stand</th><th>S.Box</th><th>Info</th></tr></thead>
-        <tbody>${b.channels.map(ch=>`<tr>
-          <td class="ch">${esc(ch.ch)}</td>
-          <td class="inst">${esc(ch.inst)||'·'}</td>
-          <td>${esc(ch.mic)||'·'}</td>
-          <td>${esc(ch.stands)||'·'}</td>
-          <td>${sboxCell(ch.sbox)}</td>
-          <td style="color:var(--tx2);font-family:inherit">${esc(ch.info)}</td>
-        </tr>`).join('')}</tbody>
-      </table></div>`;
+    html+=sumaInputsTable(projectData.inputs);
   }
 
-  const totalCh=inputs.reduce((s,b)=>s+b.channels.length,0);
-  return `<div class="sec-title">Suma · Input List</div>
-    <div class="sec-sub">${inputs.length} bandas · ${totalCh} canales totales</div>
-    ${tabs}${content}`;
+  return html;
 }
-function setBandaSuma(i){activeBanda=i;showSection('suma');}
 
-/* ── MONITORES (output list por banda) ── */
-function renderMonitores(){
-  const mons=projectData.monitores;
-  if(!mons||!mons.length)return emptyMsg('Monitores','Añade datos a la hoja MONITORES.','file');
-
-  const curBanda=activeBanda===undefined?-1:activeBanda;
-
-  let tabs='<div class="bandas-tabs">';
-  tabs+=`<button class="banda-tab ${curBanda===-1?'on':''}" onclick="setBandaMon(-1)">Todas</button>`;
+/* ── MONITORES ── */
+function monitoresTable(mons){
+  if(!mons||!mons.length)return '<div class="empty-state" style="padding:24px"><p>Sin salidas en este escenario.</p></div>';
+  const maxOut=Math.max(...mons.map(m=>m.outs.length));
+  const cols=['OUT','PATCH','MONITOR','NOTAS'];
+  let head=`<tr>`;
   mons.forEach((m,i)=>{
-    const name=m.name||projectData.overall?.bandas[m.idx-1]||`Banda ${m.idx}`;
-    tabs+=`<button class="banda-tab ${i===curBanda?'on':''}" onclick="setBandaMon(${i})">${esc(name)}</button>`;
+    const col=STAGE_COLORS[i%STAGE_COLORS.length];
+    head+=`<th colspan="${cols.length}" style="background:${col}22;color:${col};border-bottom:2px solid ${col};text-align:center">${esc(m.name||`Banda ${m.idx}`)}</th>`;
   });
-  tabs+='</div>';
-
-  let content='';
-
-  if(curBanda===-1){
-    // Vista horizontal: todas las bandas
-    const maxOut=Math.max(...mons.map(m=>m.outs.length));
-    const cols=['OUT','PATCH','MONITOR','NOTAS'];
-
-    let head=`<tr>`;
-    mons.forEach((m,i)=>{
-      const name=m.name||projectData.overall?.bandas[m.idx-1]||`Banda ${m.idx}`;
-      const col=STAGE_COLORS[i%STAGE_COLORS.length];
-      head+=`<th colspan="${cols.length}" style="background:${col}22;color:${col};border-bottom:2px solid ${col};text-align:center">${esc(name)}</th>`;
+  head+=`</tr><tr>`;
+  mons.forEach(()=>{cols.forEach(col=>{head+=`<th style="font-size:10px;white-space:nowrap">${esc(col)}</th>`;});});
+  head+=`</tr>`;
+  let body='';
+  for(let ri=0;ri<maxOut;ri++){
+    body+=`<tr>`;
+    mons.forEach(m=>{
+      const o=m.outs[ri];
+      if(o){
+        body+=`<td class="ch">${esc(o.out)}</td><td style="white-space:nowrap">${esc(o.patch)||'·'}</td><td class="inst" style="white-space:nowrap">${esc(o.monitor)||'·'}</td><td style="color:var(--tx2);font-size:11px;font-family:inherit">${esc(o.notas)||''}</td>`;
+      } else {
+        body+=`<td colspan="${cols.length}"></td>`;
+      }
     });
-    head+=`</tr><tr>`;
-    mons.forEach(()=>{
-      cols.forEach(col=>{ head+=`<th style="font-size:10px;white-space:nowrap">${esc(col)}</th>`; });
-    });
-    head+=`</tr>`;
+    body+=`</tr>`;
+  }
+  return `<div style="overflow-x:auto"><table class="io-table" style="min-width:max-content"><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
+}
 
-    let body='';
-    for(let ri=0;ri<maxOut;ri++){
-      body+=`<tr>`;
-      mons.forEach(m=>{
-        const o=m.outs[ri];
-        if(o){
-          body+=`<td class="ch">${esc(o.out)}</td>`;
-          body+=`<td style="white-space:nowrap">${esc(o.patch)||'·'}</td>`;
-          body+=`<td class="inst" style="white-space:nowrap">${esc(o.monitor)||'·'}</td>`;
-          body+=`<td style="color:var(--tx2);font-size:11px;font-family:inherit">${esc(o.notas)||''}</td>`;
-        } else {
-          body+=`<td colspan="${cols.length}"></td>`;
-        }
+function renderMonitores(){
+  const hasDays=projectData.days&&projectData.days.length;
+  if(!hasDays&&!projectData.monitores.length)return emptyMsg('Monitores','Añade datos a la hoja MONITORES.','file');
+
+  let html=`<div class="sec-title">Monitores</div><div class="sec-sub">Output list por día y escenario</div>`;
+
+  if(hasDays){
+    html+=dayStageSelector('mon');
+    const day=projectData.days[monActiveDay===-1?0:monActiveDay]||projectData.days[0];
+    if(!day||!day.monitores.length)return html+emptyMsg('','Sin datos de monitores para este día.','file');
+
+    if(monActiveStage===-1){
+      day.monitores.forEach(stage=>{
+        html+=`<div style="margin-bottom:24px">
+          <div style="font-size:13px;font-weight:700;color:var(--accent);margin-bottom:8px">${esc(stage.name)}</div>
+          ${monitoresTable(stage.bandas)}
+        </div>`;
       });
-      body+=`</tr>`;
+    } else {
+      const stage=day.monitores[monActiveStage];
+      html+=monitoresTable(stage?.bandas);
     }
-
-    content=`<div style="overflow-x:auto"><table class="io-table" style="min-width:max-content"><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
-
   } else {
-    const m=mons[curBanda];
-    if(!m)return tabs+emptyMsg('','Banda no encontrada.','file');
-    const name=m.name||projectData.overall?.bandas[m.idx-1]||`Banda ${m.idx}`;
-    content=`<div class="io-block">
-      <div class="io-head"><div class="io-name">${esc(name)}</div><div class="io-meta">${m.outs.length} salidas</div></div>
-      <table class="io-table">
-        <thead><tr><th style="width:36px">Out</th><th>Patch</th><th>Monitor</th><th>Notas</th></tr></thead>
-        <tbody>${m.outs.map(o=>`<tr>
-          <td class="ch">${esc(o.out)}</td>
-          <td>${esc(o.patch)||'·'}</td>
-          <td class="inst">${esc(o.monitor)||'·'}</td>
-          <td style="color:var(--tx2);font-family:inherit">${esc(o.notas)}</td>
-        </tr>`).join('')}</tbody>
-      </table></div>`;
+    html+=monitoresTable(projectData.monitores);
   }
 
-  return `<div class="sec-title">Monitores</div>
-    <div class="sec-sub">Output list · ${mons.length} banda${mons.length!==1?'s':''}</div>
-    ${tabs}${content}`;
+  return html;
 }
-function setBandaMon(i){activeBanda=i;showSection('monitores');}
 
 /* ── PERSONAL ── */
 function renderPersonal(){
   const pers=projectData.personal;
   if(!pers||!Object.keys(pers).length)return emptyMsg('Personal','Añade datos a la hoja PERSONAL.','users');
 
+  const dias=Object.keys(pers);
   const totalTecs=Object.values(pers)
-    .flatMap(t=>Object.values(t))
+    .flatMap(escs=>Object.values(escs))
+    .flatMap(turnos=>Object.values(turnos))
     .flatMap(b=>b.tecnicos||[])
     .filter(Boolean).length;
 
   let html=`<div class="sec-title">Personal</div>
-    <div class="sec-sub">Equipo técnico por escenario y turno · ${totalTecs} técnicos</div>`;
+    <div class="sec-sub">Equipo técnico por día, escenario y turno · ${totalTecs} técnicos</div>`;
 
-  Object.entries(pers).forEach(([escName,turnos])=>{
-    html+=`<div class="esc-block">
-      <div class="esc-head">
-        <div class="esc-head-icon"><svg viewBox="0 0 24 24"><path d="M2 20h20M4 20V10l8-6 8 6v10"/><path d="M10 20v-6h4v6"/></svg></div>
-        <div class="esc-name">${esc(escName)}</div>
-      </div>`;
+  dias.forEach(dia=>{
+    const escenarios=pers[dia];
+    html+=`<div style="margin-bottom:8px;font-size:15px;font-weight:800;letter-spacing:-.02em;color:var(--tx);padding-top:8px">${esc(dia)}</div>`;
 
-    Object.entries(turnos).forEach(([turnoName,block])=>{
-      const roles=block.roles||[];
-      const tecnicos=block.tecnicos||[];
-      const contactos=block.contactos||[];
-      const otros=block.otros||[];
-      if(!roles.length)return;
+    Object.entries(escenarios).forEach(([escName,turnos])=>{
+      html+=`<div class="esc-block">
+        <div class="esc-head">
+          <div class="esc-head-icon"><svg viewBox="0 0 24 24"><path d="M2 20h20M4 20V10l8-6 8 6v10"/><path d="M10 20v-6h4v6"/></svg></div>
+          <div class="esc-name">${esc(escName)}</div>
+        </div>`;
 
-      html+=`<div class="turno-head"><span class="turno-tag">${esc(turnoName)}</span></div>
-        <div style="overflow-x:auto">
-        <table class="turno-table" style="min-width:100%">
-          <thead><tr>
-            <th style="text-align:left;min-width:90px">—</th>
-            ${roles.map(r=>`<th>${esc(r)}</th>`).join('')}
-          </tr></thead>
-          <tbody>
-            <tr>
-              <td class="role-label">Técnico</td>
-              ${roles.map((_,i)=>`<td class="tec-name">${esc(tecnicos[i]||'')||'<span style="color:var(--tx3)">·</span>'}</td>`).join('')}
-            </tr>
-            <tr>
-              <td class="role-label">Contacto</td>
-              ${roles.map((_,i)=>`<td class="tec-contact">${esc(contactos[i]||'')}</td>`).join('')}
-            </tr>
-            ${otros.some(Boolean)?`<tr>
-              <td class="role-label">Otros</td>
-              ${roles.map((_,i)=>`<td class="tec-contact">${esc(otros[i]||'')}</td>`).join('')}
-            </tr>`:''}
-          </tbody>
-        </table></div>`;
+      Object.entries(turnos).forEach(([turnoName,block])=>{
+        const roles=block.roles||[];
+        const tecnicos=block.tecnicos||[];
+        const contactos=block.contactos||[];
+        const otros=block.otros||[];
+        if(!roles.length)return;
+
+        html+=`<div class="turno-head"><span class="turno-tag">${esc(turnoName)}</span></div>
+          <div style="overflow-x:auto">
+          <table class="turno-table" style="min-width:100%">
+            <thead><tr>
+              <th style="text-align:left;min-width:90px">—</th>
+              ${roles.map(r=>`<th>${esc(r)}</th>`).join('')}
+            </tr></thead>
+            <tbody>
+              <tr>
+                <td class="role-label">Técnico</td>
+                ${roles.map((_,i)=>`<td class="tec-name">${esc(tecnicos[i]||'')||'<span style="color:var(--tx3)">·</span>'}</td>`).join('')}
+              </tr>
+              <tr>
+                <td class="role-label">Contacto</td>
+                ${roles.map((_,i)=>`<td class="tec-contact">${esc(contactos[i]||'')}</td>`).join('')}
+              </tr>
+              ${otros.some(Boolean)?`<tr>
+                <td class="role-label">Otros</td>
+                ${roles.map((_,i)=>`<td class="tec-contact">${esc(otros[i]||'')}</td>`).join('')}
+              </tr>`:''}
+            </tbody>
+          </table></div>`;
+      });
+
+      html+='</div>';
     });
-
-    html+='</div>';
   });
 
   return html;
