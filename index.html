@@ -185,8 +185,9 @@ body{display:flex;flex-direction:column;height:100vh;overflow:hidden}
 .esc-head-icon svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2}
 .esc-name{font-size:15px;font-weight:700;color:var(--accent)}
 .turno-block{padding:0}
-.turno-head{display:flex;align-items:center;gap:8px;padding:10px 16px;background:var(--panel2);border-bottom:1px solid var(--line)}
-.turno-tag{font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--tx3);background:var(--panel3);padding:3px 10px;border-radius:20px}
+.turno-head{display:flex;align-items:center;gap:10px;padding:12px 16px;background:var(--accent-dim);border-bottom:1px solid var(--line);border-top:1px solid var(--line)}
+.turno-tag{font-size:13px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--accent);background:transparent;padding:0;display:flex;align-items:center;gap:8px}
+.turno-tag::before{content:'';width:8px;height:8px;border-radius:50%;background:var(--accent);display:inline-block}
 .turno-table{width:100%;border-collapse:collapse;font-size:12px}
 .turno-table th{text-align:center;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--th-tx);padding:8px 10px;background:var(--th-bg);border:1px solid var(--line);white-space:nowrap}
 .turno-table td{padding:8px 10px;border:1px solid var(--line);text-align:center;font-size:12px}
@@ -220,7 +221,9 @@ body.printing-landscape{ }
 @media print{
   html,body{background:#fff !important;height:auto !important;overflow:visible !important}
   body{display:block !important}
-  .topbar,.sidebar,.event-filters,.bandas-tabs,.theme-toggle,.tbtn,.back,.sync-note,#share-modal,#pdf-modal{display:none !important}
+  .topbar,.sidebar,.event-filters,.bandas-tabs,.theme-toggle,.tbtn,.back,.sync-note,#share-modal,#pdf-modal,.filter-btn,.filter-label{display:none !important}
+  /* Ocultar contenedores de filtros internos (día/escenario) */
+  .section-content > div[style*="flex-wrap:wrap"]{display:none !important}
   .main{display:block !important;overflow:visible !important;height:auto !important}
   .content{overflow:visible !important;height:auto !important;display:block !important}
   #view-event{display:block !important;height:auto !important}
@@ -245,7 +248,6 @@ body.printing-landscape{ }
   table,th,td{border-color:#c2c7cf !important}
   th{background:#eef0f3 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
   a{color:#7c3aed !important;text-decoration:underline !important}
-  /* mantener colores de fondo en pills/badges */
   [style*="background"]{-webkit-print-color-adjust:exact !important;print-color-adjust:exact !important}
 }
 @media print and (orientation: landscape){
@@ -500,22 +502,28 @@ async function sheetsGet(id,range){
 /* Lectura PUBLICA via gviz — funciona sin OAuth si la sheet esta compartida
    "Cualquiera con el enlace puede ver" */
 async function sheetsGetPublic(id,range){
-  // range tipo "INFO!A1:BZ200" -> extraer nombre de pestaña
   const sheetName=range.split('!')[0];
-  const url=`https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(sheetName)}`;
+  // headers=0 para que gviz no trate la primera fila como cabecera
+  const url=`https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:json&headers=0&sheet=${encodeURIComponent(sheetName)}`;
   const r=await fetch(url);
-  if(!r.ok)throw new Error('Sheet publico no accesible. Revisa que este compartido como "Cualquiera con el enlace".');
+  if(!r.ok)throw new Error('Sheet público no accesible. Revisa que esté compartido como "Cualquiera con el enlace".');
   const text=await r.text();
-  // gviz devuelve JSONP envuelto: google.visualization.Query.setResponse({...});
-  const match=text.match(/google\.visualization\.Query\.setResponse\(([\s\S]*)\);?\s*$/);
+  const match=text.match(/setResponse\(([\s\S]*)\);?\s*$/);
   if(!match)throw new Error('Formato de respuesta inesperado');
   const data=JSON.parse(match[1]);
-  if(data.status==='error')throw new Error('Pestaña no encontrada o sheet privado');
-  const cols=data.table.cols.map(c=>c.label||'');
-  const rows=(data.table.rows||[]).map(row=>
-    row.c.map(cell=>cell?(cell.f!==undefined?cell.f:(cell.v!==null&&cell.v!==undefined?String(cell.v):'')):'')
-  );
-  return [cols, ...rows];
+  if(data.status==='error')return [];
+  const table=data.table;
+  const numCols=table.cols.length;
+  // Con headers=0 todas las filas vienen en table.rows
+  const rows=(table.rows||[]).map(row=>{
+    const arr=[];
+    for(let i=0;i<numCols;i++){
+      const cell=row.c[i];
+      arr.push(cell?(cell.f!==undefined?cell.f:(cell.v!==null&&cell.v!==undefined?String(cell.v):'')):'');
+    }
+    return arr;
+  });
+  return rows;
 }
 function handleAuthExpired(){
   accessToken=null;
@@ -531,21 +539,52 @@ async function sheetMeta(id){
 }
 /* Metadata publica: usar gviz tambien para listar pestañas via el feed de visualizacion */
 async function sheetMetaPublic(id){
-  const url=`https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:json`;
-  const r=await fetch(url);
-  if(!r.ok)throw new Error('No se puede acceder a la hoja. Comprueba que está compartida como "Cualquiera con el enlace".');
-  // gviz sin sheet= devuelve la primera pestaña, no la lista. Usamos el endpoint de export para listar:
-  // Alternativa: pedir el HTML público y extraer nombres de pestañas del feed worksheets
-  const feedUrl=`https://spreadsheets.google.com/feeds/worksheets/${id}/public/basic?alt=json`;
+  // El feed v3 de worksheets ya no existe. Probamos nombres candidatos via gviz.
+  // gviz devuelve status 'ok' si la pestaña existe, 'error' si no.
+  const candidates=['INFO','HORARIOS','PERSONAL'];
+  // Añadir variantes con dias 1-31 para OVERALL/SUMA/MONITORES
+  for(let d=1;d<=31;d++){
+    candidates.push(`OVERALL ${d}`,`SUMA ${d}`,`MONITORES ${d}`);
+  }
+  // Tambien sin numero por compatibilidad
+  candidates.push('OVERALL','SUMA','MONITORES');
+
+  const found=[];
+  // Probar en paralelo en lotes
+  const checkTab=async(name)=>{
+    try{
+      const url=`https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(name)}&tq=${encodeURIComponent('select * limit 1')}`;
+      const r=await fetch(url);
+      if(!r.ok)return null;
+      const text=await r.text();
+      const m=text.match(/setResponse\\(([\\s\\S]*)\\);?\\s*$/);
+      if(!m)return null;
+      const data=JSON.parse(m[1]);
+      if(data.status==='ok')return name;
+      return null;
+    }catch(e){return null;}
+  };
+
+  // Verificar primero que la hoja es accesible
   try{
-    const fr=await fetch(feedUrl);
-    if(fr.ok){
-      const fd=await fr.json();
-      const entries=fd.feed.entry||[];
-      return entries.map(e=>e.title.$t);
-    }
-  }catch(e){}
-  throw new Error('No se pudieron listar las pestañas. Verifica que la hoja esté compartida públicamente.');
+    const testUrl=`https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:json&sheet=INFO`;
+    const tr=await fetch(testUrl);
+    if(!tr.ok)throw new Error('no-access');
+    const tt=await tr.text();
+    if(/Unauthorized|requires access|need access/i.test(tt))throw new Error('no-access');
+  }catch(e){
+    throw new Error('No se puede acceder a la hoja. Ve a Google Sheets → Compartir → "Cualquiera con el enlace" → Lector.');
+  }
+
+  // Comprobar candidatos en lotes de 8
+  for(let i=0;i<candidates.length;i+=8){
+    const batch=candidates.slice(i,i+8);
+    const results=await Promise.all(batch.map(checkTab));
+    results.forEach(r=>{if(r)found.push(r);});
+  }
+
+  if(!found.length)throw new Error('No se encontraron pestañas válidas. ¿La hoja tiene las pestañas INFO, HORARIOS, etc.?');
+  return found;
 }
 async function driveSearch(q){
   const url=`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name,mimeType,modifiedTime)&pageSize=50`;
@@ -1008,12 +1047,9 @@ function parsePersonal(rows){
 function parseOverallMultiStage(rows){
   if(!rows||!rows.length)return {stages:[]};
   const maxCols=Math.max(...rows.map(r=>r.length));
-
-  // Una columna "tiene banda" si en la fila 0 (cabecera de bandas) hay texto
   const bandRow=(rows[0]||[]).map(c=>(c||'').toString().trim());
 
-  // Bloques = grupos contiguos de columnas con nombre de banda en fila 0,
-  // separados por >=1 columna vacia consecutiva en la fila de bandas
+  // Detectar bloques de escenario: grupos contiguos de columnas con banda en fila 0
   const blocks=[];
   let curBandCols=[];
   for(let col=0;col<maxCols;col++){
@@ -1026,15 +1062,27 @@ function parseOverallMultiStage(rows){
   }
   if(curBandCols.length)blocks.push(curBandCols);
 
+  // Etiquetas de fila (SHOW, ARRIVAL, FOH MIXER...) y separadores de seccion.
+  // La columna de etiquetas es la inmediatamente a la izquierda del primer bloque.
+  const SECTION_WORDS=['SOUND','LIGHTNING','LIGHTING','VIDEO','OTHERS','SONIDO','ILUMINACION','OTROS'];
+
   const stages=blocks.map((bandCols,bi)=>{
-    const labelCol=bandCols[0]-1; // columna inmediatamente a la izquierda = etiquetas (SHOW, ARRIVAL...)
+    const labelCol=bandCols[0]-1;
     const bandas=bandCols.map(c=>bandRow[c]).filter(Boolean);
     const dataRows=[];
     for(let r=1;r<rows.length;r++){
-      const cat=(rows[r][labelCol]||'').toString().trim();
+      const row=rows[r]||[];
+      // Categoria: primero intentar la columna de etiquetas
+      let cat=(row[labelCol]||'').toString().trim();
+      // Si esa celda esta vacia, buscar un separador de seccion en cualquier celda del bloque
+      if(!cat){
+        const found=row.find(cell=>SECTION_WORDS.includes((cell||'').toString().trim().toUpperCase()));
+        if(found)cat=found.toString().trim();
+      }
       if(!cat)continue;
-      const vals=bandCols.map(c=>(rows[r][c]||'').toString().trim());
-      dataRows.push({cat,vals});
+      const isSection=SECTION_WORDS.includes(cat.toUpperCase());
+      const vals=isSection?[]:bandCols.map(c=>(row[c]||'').toString().trim());
+      dataRows.push({cat,vals,isSection});
     }
     return {name:`Escenario ${bi+1}`,bandas,rows:dataRows};
   });
@@ -1043,38 +1091,48 @@ function parseOverallMultiStage(rows){
 }
 
 /* Encuentra las filas donde col0 contiene "ESCENARIO N" -> marca inicio de cada bloque de escenario */
-function findStageRowBlocks(rows){
-  const idx=[];
-  rows.forEach((r,ri)=>{
-    if(/ESCENARIO\s*\d+/i.test((r[0]||'').toString())) idx.push(ri);
-  });
-  if(!idx.length)return [{name:'Escenario 1',start:0,end:rows.length}];
-  return idx.map((startRow,si)=>({
-    name:(rows[startRow][0]||`Escenario ${si+1}`).toString().trim(),
-    start:startRow,
-    end:idx[si+1]!==undefined?idx[si+1]:rows.length
+/* Detecta bloques de escenario que estan LADO A LADO (divididos por columnas).
+   "ESCENARIO N" aparece en texto vertical en una columna (col0 del bloque).
+   Devuelve [{name, startCol, endCol}] */
+function findStageColBlocks(rows){
+  const maxCols=Math.max(...rows.map(r=>r.length));
+  // Buscar columnas donde aparece "ESCENARIO N" en cualquier fila
+  const stageCols=[];
+  for(let col=0;col<maxCols;col++){
+    for(let r=0;r<rows.length;r++){
+      if(/ESCENARIO\s*\d+/i.test((rows[r][col]||'').toString())){
+        stageCols.push({col,name:(rows[r][col]||'').toString().trim()});
+        break;
+      }
+    }
+  }
+  if(!stageCols.length)return [{name:'Escenario 1',startCol:0,endCol:maxCols}];
+  return stageCols.map((sc,si)=>({
+    name:sc.name,
+    startCol:sc.col,
+    endCol:stageCols[si+1]!==undefined?stageCols[si+1].col:maxCols
   }));
 }
 
-/* SUMA por dia: bloques de escenario marcados por fila "ESCENARIO N" en col0.
-   Dentro: col1 en adelante = nombres de banda cada 6 columnas, cabeceras IN/INST/MIC/STANDS/S.BOX/INFO mas abajo */
+/* SUMA por dia: escenarios lado a lado (divididos por columnas).
+   Cada escenario: col0 = etiqueta vertical ESCENARIO N, col1+ = bandas en bloques de 6 */
 function parseInputListMultiStage(rows){
   if(!rows||!rows.length)return [];
-  const blocks=findStageRowBlocks(rows);
-  return blocks.map(({name,start,end})=>{
-    // Sub-tabla: quitar col0 (etiqueta de escenario), y solo las filas de este bloque
-    const subRows=rows.slice(start,end).map(r=>r.slice(1));
+  const blocks=findStageColBlocks(rows);
+  return blocks.map(({name,startCol,endCol})=>{
+    // Sub-tabla: columnas del bloque, saltando la col0 de etiqueta vertical
+    const subRows=rows.map(r=>r.slice(startCol+1,endCol));
     const bandas=parseInputList(subRows);
     return {name,bandas};
   });
 }
 
-/* MONITORES por dia: misma logica que SUMA */
+/* MONITORES por dia: misma logica de columnas */
 function parseMonitoresMultiStage(rows){
   if(!rows||!rows.length)return [];
-  const blocks=findStageRowBlocks(rows);
-  return blocks.map(({name,start,end})=>{
-    const subRows=rows.slice(start,end).map(r=>r.slice(1));
+  const blocks=findStageColBlocks(rows);
+  return blocks.map(({name,startCol,endCol})=>{
+    const subRows=rows.map(r=>r.slice(startCol+1,endCol));
     const bandas=parseMonitores(subRows);
     return {name,bandas};
   });
@@ -1346,8 +1404,9 @@ function overallStageTable(stage){
     if(!row.cat&&row.vals.every(v=>!v))return;
     const catUp=(row.cat||'').toUpperCase().trim();
     const sec=OVERALL_SECTIONS[catUp];
-    if(sec){
-      body+=`<tr><td colspan="${1+stage.bandas.length}" style="padding:8px 14px;background:${sec.color}18;color:${sec.color};font-weight:700;font-size:11px;letter-spacing:.1em;text-transform:uppercase;border-top:2px solid ${sec.color}55;position:sticky;left:0">${esc(sec.label)}</td></tr>`;
+    if(sec||row.isSection){
+      const s=sec||{label:row.cat,color:'#8890a4'};
+      body+=`<tr><td colspan="${1+stage.bandas.length}" style="padding:8px 14px;background:${s.color}18;color:${s.color};font-weight:700;font-size:11px;letter-spacing:.1em;text-transform:uppercase;border-top:2px solid ${s.color}55;position:sticky;left:0">${esc(s.label)}</td></tr>`;
     } else {
       body+=`<tr><td class="cat" style="position:sticky;left:0;background:var(--panel2)">${esc(row.cat)||'&nbsp;'}</td>${row.vals.map(v=>`<td>${v?esc(v):'<span style="color:var(--tx3)">·</span>'}</td>`).join('')}</tr>`;
     }
@@ -1443,7 +1502,19 @@ function sboxCell(v){
 
 function sumaInputsTable(inputs){
   if(!inputs||!inputs.length)return '<div class="empty-state" style="padding:24px"><p>Sin canales en este escenario.</p></div>';
-  const maxCh=Math.max(...inputs.map(b=>b.channels.length));
+  // Canal mas alto ocupado entre todas las bandas (por numero de CH, no por count)
+  let maxChNum=0;
+  inputs.forEach(b=>{
+    b.channels.forEach(ch=>{
+      const n=parseInt(ch.ch);
+      if(!isNaN(n)&&n>maxChNum)maxChNum=n;
+    });
+    // tambien considerar el count por si los CH no son numericos
+    if(b.channels.length>maxChNum)maxChNum=Math.max(maxChNum,b.channels.length);
+  });
+  // Redondear al multiplo de 8 superior (minimo 8)
+  const rows=Math.max(8,Math.ceil(maxChNum/8)*8);
+
   const cols=['CH','INST','MIC','STANDS','S.BOX','INFO'];
   let head=`<tr>`;
   inputs.forEach((b,i)=>{
@@ -1454,14 +1525,16 @@ function sumaInputsTable(inputs){
   inputs.forEach(()=>{cols.forEach(col=>{head+=`<th style="font-size:10px;white-space:nowrap">${esc(col)}</th>`;});});
   head+=`</tr>`;
   let body='';
-  for(let ri=0;ri<maxCh;ri++){
+  for(let ri=0;ri<rows;ri++){
     body+=`<tr>`;
     inputs.forEach(b=>{
-      const ch=b.channels[ri];
+      // buscar el canal cuyo numero == ri+1, o por indice si no numerico
+      let ch=b.channels.find(x=>parseInt(x.ch)===ri+1);
+      if(!ch)ch=b.channels[ri]&&isNaN(parseInt(b.channels[ri].ch))?b.channels[ri]:null;
       if(ch){
         body+=`<td class="ch">${esc(ch.ch)}</td><td class="inst" style="white-space:nowrap">${esc(ch.inst)||'·'}</td><td style="white-space:nowrap">${esc(ch.mic)||'·'}</td><td>${esc(ch.stands)||'·'}</td><td>${sboxCell(ch.sbox)}</td><td style="color:var(--tx2);font-family:inherit;font-size:11px">${esc(ch.info)||''}</td>`;
       } else {
-        body+=`<td colspan="${cols.length}"></td>`;
+        body+=`<td class="ch" style="color:var(--tx3)">${ri+1}</td><td colspan="${cols.length-1}"></td>`;
       }
     });
     body+=`</tr>`;
@@ -1473,7 +1546,9 @@ function renderSuma(){
   const hasDays=projectData.days&&projectData.days.length;
   if(!hasDays&&!projectData.inputs.length)return emptyMsg('Suma','Añade datos a la hoja SUMA.','sum');
 
-  let html=`<div class="sec-title">Suma · Input List</div><div class="sec-sub">Canales por día y escenario</div>`;
+  const _sday=hasDays?(projectData.days[suActiveDay===-1?0:suActiveDay]||projectData.days[0]):null;
+  const _sstage=suActiveStage===-1?'Todos los escenarios':(_sday?.inputs[suActiveStage]?.name||'');
+  let html=`<div class="sec-title">Suma · Input List</div><div class="sec-sub">${hasDays?esc(_sday?.label||''):''}${_sstage?' · '+esc(_sstage):''}</div>`;
 
   if(hasDays){
     html+=dayStageSelector('su');
@@ -1531,7 +1606,9 @@ function renderMonitores(){
   const hasDays=projectData.days&&projectData.days.length;
   if(!hasDays&&!projectData.monitores.length)return emptyMsg('Monitores','Añade datos a la hoja MONITORES.','file');
 
-  let html=`<div class="sec-title">Monitores</div><div class="sec-sub">Output list por día y escenario</div>`;
+  const _mday=hasDays?(projectData.days[monActiveDay===-1?0:monActiveDay]||projectData.days[0]):null;
+  const _mstage=monActiveStage===-1?'Todos los escenarios':(_mday?.monitores[monActiveStage]?.name||'');
+  let html=`<div class="sec-title">Monitores</div><div class="sec-sub">${hasDays?esc(_mday?.label||''):''}${_mstage?' · '+esc(_mstage):''}</div>`;
 
   if(hasDays){
     html+=dayStageSelector('mon');
