@@ -212,6 +212,45 @@ body{display:flex;flex-direction:column;height:100vh;overflow:hidden}
 ::-webkit-scrollbar{width:6px;height:6px}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--line2);border-radius:3px}
+
+/* ── PRINT / PDF ── */
+@page{margin:12mm}
+@page landscape{size:landscape}
+body.printing-landscape{ }
+@media print{
+  html,body{background:#fff !important;height:auto !important;overflow:visible !important}
+  body{display:block !important}
+  .topbar,.sidebar,.event-filters,.bandas-tabs,.theme-toggle,.tbtn,.back,.sync-note,#share-modal,#pdf-modal{display:none !important}
+  .main{display:block !important;overflow:visible !important;height:auto !important}
+  .content{overflow:visible !important;height:auto !important;display:block !important}
+  #view-event{display:block !important;height:auto !important}
+  .section-content{overflow:visible !important;padding:0 !important;height:auto !important}
+  .overall-wrap,div[style*="overflow-x:auto"]{overflow:visible !important}
+  table{page-break-inside:auto;width:100% !important}
+  tr{page-break-inside:avoid}
+  thead{display:table-header-group}
+  .day-block,.io-block,.esc-block{page-break-inside:avoid;margin-bottom:14px}
+  .sec-title{font-size:18px !important;margin-bottom:4px !important}
+  .sec-sub{font-size:11px !important;margin-bottom:10px !important}
+  /* Forzar modo claro siempre en impresion */
+  :root,[data-theme]{
+    --bg:#ffffff !important;--panel:#ffffff !important;--panel2:#f7f8fa !important;--panel3:#eef0f3 !important;
+    --line:#d4d8de !important;--line2:#c2c7cf !important;
+    --tx:#1a1d23 !important;--tx2:#5a6472 !important;--tx3:#9aa3b2 !important;
+    --accent:#7c3aed !important;--accent-dim:#ede9fe !important;--accent-tx:#ffffff !important;
+    --show:#b8780a !important;--sc:#1f8a5f !important;--lc:#b03d76 !important;--llegada:#5a6472 !important;--cambio:#c2562f !important;--offstage:#6b4fc4 !important;
+    --th-bg:#eef0f3 !important;--th-tx:#3a4250 !important;--row-hover:transparent !important;
+  }
+  body,.content,.section-content{background:#fff !important;color:#1a1d23 !important}
+  table,th,td{border-color:#c2c7cf !important}
+  th{background:#eef0f3 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  a{color:#7c3aed !important;text-decoration:underline !important}
+  /* mantener colores de fondo en pills/badges */
+  [style*="background"]{-webkit-print-color-adjust:exact !important;print-color-adjust:exact !important}
+}
+@media print and (orientation: landscape){
+  table{font-size:10px !important}
+}
 </style>
 </head>
 <body>
@@ -347,10 +386,31 @@ function setLoading(m){showView('view-loading');document.getElementById('loading
 /* ── AUTH ── */
 /* ── EXPORT PDF ── */
 function exportPDF(){
+  document.getElementById('pdf-modal').style.display='flex';
+}
+function closePdfModal(){document.getElementById('pdf-modal').style.display='none';}
+function doExportPDF(orientation){
+  closePdfModal();
   const html=document.documentElement;
-  const prev=html.getAttribute('data-theme');
+  const prevTheme=html.getAttribute('data-theme');
   html.setAttribute('data-theme','light');
-  setTimeout(()=>{window.print();setTimeout(()=>html.setAttribute('data-theme',prev),800);},150);
+
+  // Insertar regla @page dinamica para orientacion
+  let styleTag=document.getElementById('print-orientation-style');
+  if(!styleTag){
+    styleTag=document.createElement('style');
+    styleTag.id='print-orientation-style';
+    document.head.appendChild(styleTag);
+  }
+  styleTag.textContent=`@page{size:${orientation};margin:12mm}`;
+
+  setTimeout(()=>{
+    window.print();
+    setTimeout(()=>{
+      html.setAttribute('data-theme',prevTheme);
+      styleTag.textContent='';
+    },600);
+  },150);
 }
 
 /* ── SHARE LINK ── */
@@ -1361,6 +1421,25 @@ function emptyMsg(title,msg,icon){
 }
 
 </script>
+<!-- PDF MODAL -->
+<div id="pdf-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;align-items:center;justify-content:center;padding:20px">
+  <div style="background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:28px;max-width:380px;width:100%">
+    <div style="font-size:18px;font-weight:800;letter-spacing:-.02em;margin-bottom:6px">Exportar PDF</div>
+    <div style="font-size:13px;color:var(--tx2);line-height:1.6;margin-bottom:20px">Elige la orientación de la página para imprimir esta vista.</div>
+    <div style="display:flex;gap:10px;margin-bottom:14px">
+      <button onclick="doExportPDF('portrait')" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:8px;padding:16px;border-radius:12px;border:1px solid var(--line2);background:var(--panel2);color:var(--tx);cursor:pointer;font-family:inherit">
+        <svg viewBox="0 0 24 24" width="28" height="28" stroke="currentColor" fill="none" stroke-width="1.5"><rect x="5" y="2" width="14" height="20" rx="2"/></svg>
+        <span style="font-size:12px;font-weight:600">Vertical</span>
+      </button>
+      <button onclick="doExportPDF('landscape')" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:8px;padding:16px;border-radius:12px;border:1px solid var(--line2);background:var(--panel2);color:var(--tx);cursor:pointer;font-family:inherit">
+        <svg viewBox="0 0 24 24" width="28" height="28" stroke="currentColor" fill="none" stroke-width="1.5"><rect x="2" y="5" width="20" height="14" rx="2"/></svg>
+        <span style="font-size:12px;font-weight:600">Horizontal</span>
+      </button>
+    </div>
+    <button class="tbtn" style="width:100%;justify-content:center" onclick="closePdfModal()">Cancelar</button>
+  </div>
+</div>
+
 <!-- SHARE MODAL -->
 <div id="share-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;align-items:center;justify-content:center;padding:20px">
   <div style="background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:28px;max-width:480px;width:100%">
