@@ -534,32 +534,73 @@ async function sheetsGet(id,range){
    "Cualquiera con el enlace puede ver" */
 async function sheetsGetPublic(id,range){
   const sheetName=range.split('!')[0];
-  // headers=0 para que gviz no trate la primera fila como cabecera
-  const url=`https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:json&headers=0&sheet=${encodeURIComponent(sheetName)}`;
-  const r=await fetch(url);
-  if(!r.ok)throw new Error('Sheet público no accesible. Revisa que esté compartido como "Cualquiera con el enlace".');
-  const text=await r.text();
-  let match=text.match(/setResponse\(([\s\S]*?)\);?\s*$/);
-  if(!match){
-    const start=text.indexOf('{');
-    const end=text.lastIndexOf('}');
-    if(start>=0&&end>start)match=[null,text.slice(start,end+1)];
-  }
-  if(!match)throw new Error('Formato de respuesta inesperado');
-  let data;
-  try{ data=JSON.parse(match[1]); }catch(e){ return []; }
-  if(!data.table||data.status==='error')return [];
-  const table=data.table;
-  const numCols=table.cols.length;
-  // Con headers=0 todas las filas vienen en table.rows
-  const rows=(table.rows||[]).map(row=>{
-    const arr=[];
-    for(let i=0;i<numCols;i++){
-      const cell=row.c[i];
-      arr.push(cell?(cell.f!==undefined?cell.f:(cell.v!==null&&cell.v!==undefined?String(cell.v):'')):'');
+  // Intentar primero via gviz con headers=0
+  try{
+    const url=`https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:json&headers=0&sheet=${encodeURIComponent(sheetName)}`;
+    const r=await fetch(url);
+    if(r.ok){
+      const text=await r.text();
+      let match=text.match(/setResponse\(([\s\S]*?)\);?\s*$/);
+      if(!match){
+        const start=text.indexOf('{');
+        const end=text.lastIndexOf('}');
+        if(start>=0&&end>start)match=[null,text.slice(start,end+1)];
+      }
+      if(match){
+        let data;
+        try{ data=JSON.parse(match[1]); }catch(e){ data=null; }
+        if(data&&data.table&&data.status!=='error'){
+          const table=data.table;
+          const numCols=table.cols.length;
+          const rows=(table.rows||[]).map(row=>{
+            const cells=row.c||[];
+            const len=Math.max(numCols,cells.length);
+            const arr=[];
+            for(let i=0;i<len;i++){
+              const cell=cells[i];
+              arr.push(cell?(cell.f!==undefined&&cell.f!==null?String(cell.f):(cell.v!==null&&cell.v!==undefined?String(cell.v):'')):'');
+            }
+            return arr;
+          });
+          if(rows.length)return rows;
+        }
+      }
     }
-    return arr;
-  });
+  }catch(e){ /* fallback a CSV */ }
+
+  // Fallback: exportar como CSV (respeta estructura completa incluyendo filas/cols vacias)
+  try{
+    const csvUrl=`https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:csv&headers=0&sheet=${encodeURIComponent(sheetName)}`;
+    const cr=await fetch(csvUrl);
+    if(cr.ok){
+      const csv=await cr.text();
+      return parseCSV(csv);
+    }
+  }catch(e){}
+
+  return [];
+}
+
+/* Parser CSV simple que respeta comillas y comas internas */
+function parseCSV(text){
+  const rows=[];
+  let row=[],field='',inQuotes=false;
+  for(let i=0;i<text.length;i++){
+    const ch=text[i];
+    if(inQuotes){
+      if(ch==='"'){
+        if(text[i+1]==='"'){field+='"';i++;}
+        else inQuotes=false;
+      } else field+=ch;
+    } else {
+      if(ch==='"')inQuotes=true;
+      else if(ch===','){row.push(field);field='';}
+      else if(ch==='\n'){row.push(field);rows.push(row);row=[];field='';}
+      else if(ch==='\r'){/* ignorar */}
+      else field+=ch;
+    }
+  }
+  if(field||row.length){row.push(field);rows.push(row);}
   return rows;
 }
 function handleAuthExpired(){
@@ -684,7 +725,12 @@ async function syncProject(){
     const data={tabs,raw:{}};
     // Leer cada pestaña conocida
     for(const tab of tabs){
-      try{ data.raw[tab]=await sheetsGet(id,`${tab}!A1:BZ200`); }catch(e){ data.raw[tab]=[]; }
+      try{
+        data.raw[tab]=await sheetsGet(id,`${tab}!A1:BZ200`);
+      }catch(e){ data.raw[tab]=[]; console.warn('[Cleansheet] Error leyendo',tab,e.message); }
+    }
+    if(VIEWER_MODE){
+      console.log('[Cleansheet] Modo viewer. Pestañas leídas:',Object.keys(data.raw).map(t=>`${t}: ${data.raw[t].length} filas`));
     }
     projectData=parseProject(data);
     window.__CS_DEBUG__=projectData; // accesible desde consola: window.__CS_DEBUG__
