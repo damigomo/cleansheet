@@ -229,7 +229,8 @@ body{display:flex;flex-direction:column;height:100vh;overflow:hidden}
     <span class="logo-name">Cleansheet</span>
   </div>
   <div class="breadcrumb" id="breadcrumb"><span style="color:var(--tx3)">Proyectos activos</span></div>
-  <div class="topbar-actions" id="topbar-actions">
+  <div class="topbar-actions">
+    <div id="event-actions"></div>
     <button class="theme-toggle" onclick="toggleTheme()" id="theme-toggle" title="Cambiar tema">
       <svg id="theme-icon" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
     </button>
@@ -290,6 +291,12 @@ body{display:flex;flex-direction:column;height:100vh;overflow:hidden}
 const CLIENT_ID = '824139869043-ivgbfk9eh02bbj4o4887mch212rcd38h.apps.googleusercontent.com';
 const SCOPES = 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.readonly';
 
+// ── MODO VIEWER (link publico sin login) ──
+const urlParams=new URLSearchParams(window.location.search);
+const VIEWER_SHEET_ID=urlParams.get('view');
+const VIEWER_MODE=!!VIEWER_SHEET_ID;
+const VIEWER_NAME=urlParams.get('name')||'Evento';
+
 let tokenClient, accessToken=null;
 let currentProject=null, projectData=null;
 let activeSection='info', activeStage='all', activeBanda=-1;
@@ -346,8 +353,39 @@ function exportPDF(){
   setTimeout(()=>{window.print();setTimeout(()=>html.setAttribute('data-theme',prev),800);},150);
 }
 
+/* ── SHARE LINK ── */
+function openShareModal(){
+  if(!currentProject||!currentProject.sheets.length)return;
+  const sheetId=currentProject.sheets[0].id;
+  const base=window.location.origin+window.location.pathname;
+  const url=`${base}?view=${sheetId}&name=${encodeURIComponent(currentProject.name)}`;
+  document.getElementById('share-url-input').value=url;
+  document.getElementById('share-warning').style.display='block';
+  document.getElementById('share-modal').style.display='flex';
+}
+function closeShareModal(){document.getElementById('share-modal').style.display='none';}
+function copyShareLink(){
+  const input=document.getElementById('share-url-input');
+  input.select();
+  navigator.clipboard?.writeText(input.value).then(()=>{
+    const btn=document.getElementById('copy-btn');
+    const orig=btn.textContent;
+    btn.textContent='✓ Copiado';
+    setTimeout(()=>btn.textContent=orig,1500);
+  }).catch(()=>{document.execCommand('copy');});
+}
+
 window.addEventListener('load',()=>{
   updateThemeIcon(document.documentElement.getAttribute('data-theme'));
+
+  if(VIEWER_MODE){
+    // Modo publico: sin login, sin sidebar de proyectos, directo al evento
+    document.getElementById('auth-area').innerHTML=`<div class="user-pill"><div class="user-dot"></div><span>Vista pública</span></div>`;
+    document.getElementById('breadcrumb').innerHTML=`<span class="current">${esc(VIEWER_NAME)}</span>`;
+    openViewerProject();
+    return;
+  }
+
   tokenClient=google.accounts.oauth2.initTokenClient({
     client_id:CLIENT_ID, scope:SCOPES,
     callback:async r=>{
@@ -373,9 +411,20 @@ window.addEventListener('load',()=>{
     showView('view-login');
   }
 });
+
+/* Abrir evento directamente en modo viewer (sin Drive, sin lista de proyectos) */
+async function openViewerProject(){
+  currentProject={name:VIEWER_NAME,sheets:[{id:VIEWER_SHEET_ID,name:VIEWER_NAME}]};
+  activeSection='info';activeStage='all';activeBanda=-1;
+  document.getElementById('event-actions').innerHTML=`
+    <button class="tbtn" onclick="syncProject()"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>Actualizar</button>
+    <button class="tbtn primary" onclick="exportPDF()"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Exportar PDF</button>`;
+  await syncProject();
+}
 function signIn(){tokenClient.requestAccessToken({prompt:'select_account consent'});}
 function signOut(){google.accounts.oauth2.revoke(accessToken);accessToken=null;try{localStorage.removeItem('cs_token');localStorage.removeItem('cs_token_exp');}catch(e){}document.getElementById('sidebar').classList.add('hidden');showView('view-login');updateAuthUI();document.getElementById('breadcrumb').innerHTML='<span style="color:var(--tx3)">Proyectos activos</span>';}
 function updateAuthUI(){
+  if(VIEWER_MODE)return;
   document.getElementById('auth-area').innerHTML=accessToken
     ?`<div class="user-pill"><div class="user-dot"></div><span>Conectado</span></div><button class="tbtn" onclick="signOut()">Salir</button>`
     :'';
@@ -383,11 +432,33 @@ function updateAuthUI(){
 
 /* ── API ── */
 async function sheetsGet(id,range){
+  if(VIEWER_MODE) return sheetsGetPublic(id,range);
   const url=`https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(range)}`;
   const r=await fetch(url,{headers:{Authorization:`Bearer ${accessToken}`}});
   if(r.status===401){handleAuthExpired();throw new Error('Sesion expirada');}
   if(!r.ok)throw new Error('Sheets '+r.status);
   return (await r.json()).values||[];
+}
+
+/* Lectura PUBLICA via gviz — funciona sin OAuth si la sheet esta compartida
+   "Cualquiera con el enlace puede ver" */
+async function sheetsGetPublic(id,range){
+  // range tipo "INFO!A1:BZ200" -> extraer nombre de pestaña
+  const sheetName=range.split('!')[0];
+  const url=`https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(sheetName)}`;
+  const r=await fetch(url);
+  if(!r.ok)throw new Error('Sheet publico no accesible. Revisa que este compartido como "Cualquiera con el enlace".');
+  const text=await r.text();
+  // gviz devuelve JSONP envuelto: google.visualization.Query.setResponse({...});
+  const match=text.match(/google\.visualization\.Query\.setResponse\(([\s\S]*)\);?\s*$/);
+  if(!match)throw new Error('Formato de respuesta inesperado');
+  const data=JSON.parse(match[1]);
+  if(data.status==='error')throw new Error('Pestaña no encontrada o sheet privado');
+  const cols=data.table.cols.map(c=>c.label||'');
+  const rows=(data.table.rows||[]).map(row=>
+    row.c.map(cell=>cell?(cell.f!==undefined?cell.f:(cell.v!==null&&cell.v!==undefined?String(cell.v):'')):'')
+  );
+  return [cols, ...rows];
 }
 function handleAuthExpired(){
   accessToken=null;
@@ -454,7 +525,7 @@ async function openProject(pJson){
     <span class="sep">/</span><span class="current">${esc(currentProject.name)}</span>`;
   await syncProject();
 }
-function goHome(){currentProject=null;projectData=null;document.getElementById('sidebar').classList.add('hidden');loadProjects();}
+function goHome(){if(VIEWER_MODE)return;currentProject=null;projectData=null;document.getElementById('sidebar').classList.add('hidden');const ea=document.getElementById('event-actions');if(ea)ea.innerHTML='';loadProjects();}
 
 async function syncProject(){
   setLoading(`Leyendo ${currentProject.name}...`);
@@ -823,7 +894,10 @@ function renderSidebar(){
   ).join('');
   const nEsc=projectData.escenarios.length||1;
   const nBandas=projectData.numBandas||0;
-  document.getElementById('nav-foot').innerHTML=`${nEsc} escenario${nEsc!==1?'s':''}<br>${nBandas} banda${nBandas!==1?'s':''}<br><span style="color:var(--sc)">↑ ${esc(currentProject.sheets[0].name)}</span>`;
+  document.getElementById('nav-foot').innerHTML=VIEWER_MODE
+    ?`${nEsc} escenario${nEsc!==1?'s':''}<br>${nBandas} banda${nBandas!==1?'s':''}<br><span style="color:var(--accent)">👁 Vista pública</span>`
+    :`${nEsc} escenario${nEsc!==1?'s':''}<br>${nBandas} banda${nBandas!==1?'s':''}<br><span style="color:var(--sc)">↑ ${esc(currentProject.sheets[0].name)}</span>`;
+  document.getElementById('sidebar').classList.remove('hidden');
 }
 
 /* ── SECTION ROUTER ── */
@@ -1296,5 +1370,25 @@ function emptyMsg(title,msg,icon){
 }
 
 </script>
+<!-- SHARE MODAL -->
+<div id="share-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;align-items:center;justify-content:center;padding:20px">
+  <div style="background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:28px;max-width:480px;width:100%">
+    <div style="display:flex;align-items:center;justify-content:between;margin-bottom:6px">
+      <div style="font-size:18px;font-weight:800;letter-spacing:-.02em">Compartir vista pública</div>
+    </div>
+    <div style="font-size:13px;color:var(--tx2);line-height:1.6;margin-bottom:18px">
+      Cualquiera con este enlace podrá ver este evento sin necesidad de iniciar sesión. Asegúrate de que el Google Sheet esté compartido como <strong>"Cualquiera con el enlace puede ver"</strong>.
+    </div>
+    <div id="share-warning" style="display:none;background:var(--danger-dim);border:1px solid var(--danger);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--danger);margin-bottom:14px">
+      ⚠ Asegúrate de compartir la hoja de Google Sheets antes de enviar el enlace (Compartir → Cualquiera con el enlace → Lector).
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:14px">
+      <input id="share-url-input" readonly style="flex:1;background:var(--panel2);border:1px solid var(--line2);border-radius:8px;padding:10px 12px;font-size:12px;color:var(--tx);font-family:var(--mono)">
+      <button class="tbtn primary" onclick="copyShareLink()" id="copy-btn">Copiar</button>
+    </div>
+    <button class="tbtn" style="width:100%;justify-content:center" onclick="closeShareModal()">Cerrar</button>
+  </div>
+</div>
+
 </body>
 </html>
