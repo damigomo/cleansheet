@@ -404,7 +404,7 @@ function doExportPDF(orientation){
     styleTag.id='print-orientation-style';
     document.head.appendChild(styleTag);
   }
-  styleTag.textContent=`@page{size:${orientation};margin:12mm}`;
+  styleTag.textContent=`@page{size:${orientation};margin:8mm}`;
 
   setTimeout(()=>{
     window.print();
@@ -1047,56 +1047,97 @@ function parsePersonal(rows){
 function parseOverallMultiStage(rows){
   if(!rows||!rows.length)return {stages:[]};
   const maxCols=Math.max(...rows.map(r=>r.length));
-  const bandRow=(rows[0]||[]).map(c=>(c||'').toString().trim());
-
-  // Detectar bloques de escenario: grupos contiguos de columnas con banda en fila 0
-  const blocks=[];
-  let curBandCols=[];
-  for(let col=0;col<maxCols;col++){
-    if(bandRow[col]){
-      curBandCols.push(col);
-    } else if(curBandCols.length){
-      blocks.push(curBandCols);
-      curBandCols=[];
-    }
-  }
-  if(curBandCols.length)blocks.push(curBandCols);
-
-  // Etiquetas de fila (SHOW, ARRIVAL, FOH MIXER...) y separadores de seccion.
-  // La columna de etiquetas es la inmediatamente a la izquierda del primer bloque.
   const SECTION_WORDS=['SOUND','LIGHTNING','LIGHTING','VIDEO','OTHERS','SONIDO','ILUMINACION','OTROS'];
 
-  const stages=blocks.map((bandCols,bi)=>{
-    const labelCol=bandCols[0]-1;
-    const bandas=bandCols.map(c=>bandRow[c]).filter(Boolean);
+  // Detectar columnas donde aparece "ESCENARIO N" (texto vertical) -> inicio de cada bloque
+  const stageCols=[];
+  for(let col=0;col<maxCols;col++){
+    for(let r=0;r<rows.length;r++){
+      if(/ESCENARIO\s*\d+/i.test((rows[r][col]||'').toString())){
+        stageCols.push({col,name:(rows[r][col]||'').toString().trim()});
+        break;
+      }
+    }
+  }
+
+  // Si no hay marcadores ESCENARIO, tratar todo como un escenario
+  let blocks;
+  if(!stageCols.length){
+    blocks=[{startCol:0,endCol:maxCols,name:'Escenario 1'}];
+  } else {
+    blocks=stageCols.map((sc,si)=>({
+      startCol:sc.col,
+      endCol:stageCols[si+1]!==undefined?stageCols[si+1].col:maxCols,
+      name:sc.name
+    }));
+  }
+
+  // Fila de nombres de banda: buscar la primera fila que tenga >=2 celdas no vacias
+  // en columnas mas alla de la etiqueta (suele ser fila 1, indice 0 o 1)
+  let bandRowIdx=0;
+  for(let r=0;r<Math.min(rows.length,4);r++){
+    const nonEmpty=(rows[r]||[]).filter(c=>(c||'').toString().trim()&&!/ESCENARIO/i.test(c)).length;
+    if(nonEmpty>=2){bandRowIdx=r;break;}
+  }
+  const bandRow=(rows[bandRowIdx]||[]).map(c=>(c||'').toString().trim());
+
+  const stages=blocks.map((blk,bi)=>{
+    // Dentro del bloque: col0 = etiqueta vertical escenario (saltar),
+    // col1 = etiquetas de fila (SHOW...), col2+ = bandas
+    const labelCol=blk.startCol+1;
+    const bandCols=[];
+    for(let c=blk.startCol+2;c<blk.endCol;c++){
+      if(bandRow[c])bandCols.push(c);
+    }
+    const bandas=bandCols.map(c=>bandRow[c]);
+
     const dataRows=[];
-    for(let r=1;r<rows.length;r++){
+    for(let r=bandRowIdx+1;r<rows.length;r++){
       const row=rows[r]||[];
-      // Categoria: primero intentar la columna de etiquetas
       let cat=(row[labelCol]||'').toString().trim();
-      // Si esa celda esta vacia, buscar un separador de seccion en cualquier celda del bloque
       if(!cat){
-        const found=row.find(cell=>SECTION_WORDS.includes((cell||'').toString().trim().toUpperCase()));
-        if(found)cat=found.toString().trim();
+        // buscar separador de seccion dentro del rango de columnas del bloque
+        for(let c=blk.startCol;c<blk.endCol;c++){
+          const v=(row[c]||'').toString().trim().toUpperCase();
+          if(SECTION_WORDS.includes(v)){cat=row[c].toString().trim();break;}
+        }
       }
       if(!cat)continue;
       const isSection=SECTION_WORDS.includes(cat.toUpperCase());
       const vals=isSection?[]:bandCols.map(c=>(row[c]||'').toString().trim());
       dataRows.push({cat,vals,isSection});
     }
-    return {name:`Escenario ${bi+1}`,bandas,rows:dataRows};
+    return {name:blk.name||`Escenario ${bi+1}`,bandas,rows:dataRows};
   });
 
   return {stages};
 }
 
-/* Encuentra las filas donde col0 contiene "ESCENARIO N" -> marca inicio de cada bloque de escenario */
-/* Detecta bloques de escenario que estan LADO A LADO (divididos por columnas).
-   "ESCENARIO N" aparece en texto vertical en una columna (col0 del bloque).
-   Devuelve [{name, startCol, endCol}] */
+/* Detecta bloques de escenario divididos por FILAS.
+   "ESCENARIO N" aparece en col0 marcando el inicio vertical de cada bloque.
+   Devuelve [{name, startRow, endRow}] */
+function findStageRowBlocks(rows){
+  const idx=[];
+  rows.forEach((r,ri)=>{
+    // buscar ESCENARIO N en las primeras 2 columnas
+    for(let c=0;c<2;c++){
+      if(/ESCENARIO\s*\d+/i.test((r[c]||'').toString())){
+        idx.push({row:ri,name:(r[c]||'').toString().trim()});
+        break;
+      }
+    }
+  });
+  if(!idx.length)return [{name:'Escenario 1',startRow:0,endRow:rows.length}];
+  return idx.map((it,si)=>({
+    name:it.name,
+    startRow:it.row,
+    endRow:idx[si+1]!==undefined?idx[si+1].row:rows.length
+  }));
+}
+
+/* Detecta bloques de escenario divididos por COLUMNAS (lado a lado) */
 function findStageColBlocks(rows){
   const maxCols=Math.max(...rows.map(r=>r.length));
-  // Buscar columnas donde aparece "ESCENARIO N" en cualquier fila
   const stageCols=[];
   for(let col=0;col<maxCols;col++){
     for(let r=0;r<rows.length;r++){
@@ -1114,28 +1155,62 @@ function findStageColBlocks(rows){
   }));
 }
 
-/* SUMA por dia: escenarios lado a lado (divididos por columnas).
-   Cada escenario: col0 = etiqueta vertical ESCENARIO N, col1+ = bandas en bloques de 6 */
-function parseInputListMultiStage(rows){
-  if(!rows||!rows.length)return [];
-  const blocks=findStageColBlocks(rows);
-  return blocks.map(({name,startCol,endCol})=>{
-    // Sub-tabla: columnas del bloque, saltando la col0 de etiqueta vertical
-    const subRows=rows.map(r=>r.slice(startCol+1,endCol));
-    const bandas=parseInputList(subRows);
-    return {name,bandas};
+/* Decide si los escenarios estan divididos por filas o columnas, contando marcadores */
+function stagesAreByRows(rows){
+  // Contar cuantas filas distintas tienen ESCENARIO en col0/col1
+  let rowMarkers=0;
+  rows.forEach(r=>{
+    for(let c=0;c<2;c++){
+      if(/ESCENARIO\s*\d+/i.test((r[c]||'').toString())){rowMarkers++;break;}
+    }
   });
+  // Contar cuantas columnas distintas tienen ESCENARIO
+  const maxCols=Math.max(...rows.map(r=>r.length));
+  let colMarkers=0;
+  for(let col=0;col<maxCols;col++){
+    for(let r=0;r<rows.length;r++){
+      if(/ESCENARIO\s*\d+/i.test((rows[r][col]||'').toString())){colMarkers++;break;}
+    }
+  }
+  // Si hay mas de un marcador en filas distintas -> division por filas
+  return rowMarkers>=colMarkers;
 }
 
-/* MONITORES por dia: misma logica de columnas */
+/* SUMA por dia: detecta automaticamente si escenarios van por filas o columnas */
+function parseInputListMultiStage(rows){
+  if(!rows||!rows.length)return [];
+  if(stagesAreByRows(rows)){
+    const blocks=findStageRowBlocks(rows);
+    return blocks.map(({name,startRow,endRow})=>{
+      // Sub-tabla: filas del bloque, quitando col0 (etiqueta vertical)
+      const subRows=rows.slice(startRow,endRow).map(r=>r.slice(1));
+      return {name,bandas:parseInputList(subRows)};
+    });
+  } else {
+    const blocks=findStageColBlocks(rows);
+    return blocks.map(({name,startCol,endCol})=>{
+      const subRows=rows.map(r=>r.slice(startCol+1,endCol));
+      return {name,bandas:parseInputList(subRows)};
+    });
+  }
+}
+
+/* MONITORES por dia: misma deteccion automatica que SUMA */
 function parseMonitoresMultiStage(rows){
   if(!rows||!rows.length)return [];
-  const blocks=findStageColBlocks(rows);
-  return blocks.map(({name,startCol,endCol})=>{
-    const subRows=rows.map(r=>r.slice(startCol+1,endCol));
-    const bandas=parseMonitores(subRows);
-    return {name,bandas};
-  });
+  if(stagesAreByRows(rows)){
+    const blocks=findStageRowBlocks(rows);
+    return blocks.map(({name,startRow,endRow})=>{
+      const subRows=rows.slice(startRow,endRow).map(r=>r.slice(1));
+      return {name,bandas:parseMonitores(subRows)};
+    });
+  } else {
+    const blocks=findStageColBlocks(rows);
+    return blocks.map(({name,startCol,endCol})=>{
+      const subRows=rows.map(r=>r.slice(startCol+1,endCol));
+      return {name,bandas:parseMonitores(subRows)};
+    });
+  }
 }
 
 /* PERSONAL multi-dia: estructura real vista en capturas:
@@ -1576,7 +1651,17 @@ function renderSuma(){
 /* ── MONITORES ── */
 function monitoresTable(mons){
   if(!mons||!mons.length)return '<div class="empty-state" style="padding:24px"><p>Sin salidas en este escenario.</p></div>';
-  const maxOut=Math.max(...mons.map(m=>m.outs.length));
+  // Salida mas alta ocupada entre todas las bandas
+  let maxOutNum=0;
+  mons.forEach(m=>{
+    m.outs.forEach(o=>{
+      const n=parseInt(o.out);
+      if(!isNaN(n)&&n>maxOutNum)maxOutNum=n;
+    });
+    if(m.outs.length>maxOutNum)maxOutNum=Math.max(maxOutNum,m.outs.length);
+  });
+  const rowsCount=Math.max(8,Math.ceil(maxOutNum/8)*8);
+
   const cols=['OUT','PATCH','MONITOR','NOTAS'];
   let head=`<tr>`;
   mons.forEach((m,i)=>{
@@ -1587,14 +1672,15 @@ function monitoresTable(mons){
   mons.forEach(()=>{cols.forEach(col=>{head+=`<th style="font-size:10px;white-space:nowrap">${esc(col)}</th>`;});});
   head+=`</tr>`;
   let body='';
-  for(let ri=0;ri<maxOut;ri++){
+  for(let ri=0;ri<rowsCount;ri++){
     body+=`<tr>`;
     mons.forEach(m=>{
-      const o=m.outs[ri];
+      let o=m.outs.find(x=>parseInt(x.out)===ri+1);
+      if(!o)o=m.outs[ri]&&isNaN(parseInt(m.outs[ri].out))?m.outs[ri]:null;
       if(o){
         body+=`<td class="ch">${esc(o.out)}</td><td style="white-space:nowrap">${esc(o.patch)||'·'}</td><td class="inst" style="white-space:nowrap">${esc(o.monitor)||'·'}</td><td style="color:var(--tx2);font-size:11px;font-family:inherit">${esc(o.notas)||''}</td>`;
       } else {
-        body+=`<td colspan="${cols.length}"></td>`;
+        body+=`<td class="ch" style="color:var(--tx3)">${ri+1}</td><td colspan="${cols.length-1}"></td>`;
       }
     });
     body+=`</tr>`;
@@ -1726,7 +1812,8 @@ function emptyMsg(title,msg,icon){
 <div id="pdf-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;align-items:center;justify-content:center;padding:20px">
   <div style="background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:28px;max-width:380px;width:100%">
     <div style="font-size:18px;font-weight:800;letter-spacing:-.02em;margin-bottom:6px">Exportar PDF</div>
-    <div style="font-size:13px;color:var(--tx2);line-height:1.6;margin-bottom:20px">Elige la orientación de la página para imprimir esta vista.</div>
+    <div style="font-size:13px;color:var(--tx2);line-height:1.6;margin-bottom:14px">Elige la orientación de la página para imprimir esta vista.</div>
+    <div style="font-size:12px;color:var(--tx3);line-height:1.5;margin-bottom:18px;padding:10px 12px;background:var(--panel2);border-radius:8px;border:1px solid var(--line2)">💡 En el diálogo de impresión, abre <strong>"Más ajustes"</strong> y desactiva <strong>"Encabezados y pies de página"</strong> para que no salga la fecha ni la URL.</div>
     <div style="display:flex;gap:10px;margin-bottom:14px">
       <button onclick="doExportPDF('portrait')" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:8px;padding:16px;border-radius:12px;border:1px solid var(--line2);background:var(--panel2);color:var(--tx);cursor:pointer;font-family:inherit">
         <svg viewBox="0 0 24 24" width="28" height="28" stroke="currentColor" fill="none" stroke-width="1.5"><rect x="5" y="2" width="14" height="20" rx="2"/></svg>
