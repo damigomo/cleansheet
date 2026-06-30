@@ -539,10 +539,16 @@ async function sheetsGetPublic(id,range){
   const r=await fetch(url);
   if(!r.ok)throw new Error('Sheet público no accesible. Revisa que esté compartido como "Cualquiera con el enlace".');
   const text=await r.text();
-  const match=text.match(/setResponse\(([\s\S]*)\);?\s*$/);
+  let match=text.match(/setResponse\(([\s\S]*?)\);?\s*$/);
+  if(!match){
+    const start=text.indexOf('{');
+    const end=text.lastIndexOf('}');
+    if(start>=0&&end>start)match=[null,text.slice(start,end+1)];
+  }
   if(!match)throw new Error('Formato de respuesta inesperado');
-  const data=JSON.parse(match[1]);
-  if(data.status==='error')return [];
+  let data;
+  try{ data=JSON.parse(match[1]); }catch(e){ return []; }
+  if(!data.table||data.status==='error')return [];
   const table=data.table;
   const numCols=table.cols.length;
   // Con headers=0 todas las filas vienen en table.rows
@@ -570,51 +576,48 @@ async function sheetMeta(id){
 }
 /* Metadata publica: usar gviz tambien para listar pestañas via el feed de visualizacion */
 async function sheetMetaPublic(id){
-  // El feed v3 de worksheets ya no existe. Probamos nombres candidatos via gviz.
-  // gviz devuelve status 'ok' si la pestaña existe, 'error' si no.
+  // Probar nombres candidatos via gviz. Una pestaña existe si gviz responde status 'ok'.
   const candidates=['INFO','HORARIOS','PERSONAL'];
-  // Añadir variantes con dias 1-31 para OVERALL/SUMA/MONITORES
   for(let d=1;d<=31;d++){
     candidates.push(`OVERALL ${d}`,`SUMA ${d}`,`MONITORES ${d}`);
   }
-  // Tambien sin numero por compatibilidad
-  candidates.push('OVERALL','SUMA','MONITORES');
+  candidates.push('OVERALL','SUMA','MONITORES','TURNOS');
 
-  const found=[];
-  // Probar en paralelo en lotes
   const checkTab=async(name)=>{
     try{
-      const url=`https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(name)}&tq=${encodeURIComponent('select * limit 1')}`;
+      const url=`https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:json&headers=0&sheet=${encodeURIComponent(name)}`;
       const r=await fetch(url);
       if(!r.ok)return null;
       const text=await r.text();
-      const m=text.match(/setResponse\\(([\\s\\S]*)\\);?\\s*$/);
+      // gviz JSONP: extraer el objeto JSON
+      const m=text.match(/setResponse\(([\s\S]*?)\);?\s*$/);
       if(!m)return null;
-      const data=JSON.parse(m[1]);
+      let data;
+      try{ data=JSON.parse(m[1]); }catch(e){ return null; }
+      // status 'ok' = pestaña existe. 'error' = no existe o sin acceso.
       if(data.status==='ok')return name;
       return null;
     }catch(e){return null;}
   };
 
-  // Verificar primero que la hoja es accesible
-  try{
-    const testUrl=`https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:json&sheet=INFO`;
-    const tr=await fetch(testUrl);
-    if(!tr.ok)throw new Error('no-access');
-    const tt=await tr.text();
-    if(/Unauthorized|requires access|need access/i.test(tt))throw new Error('no-access');
-  }catch(e){
-    throw new Error('No se puede acceder a la hoja. Ve a Google Sheets → Compartir → "Cualquiera con el enlace" → Lector.');
-  }
+  // Comprobar TODOS los candidatos en paralelo (mas rapido y fiable)
+  const results=await Promise.all(candidates.map(checkTab));
+  const found=results.filter(Boolean);
+  console.log('[Cleansheet] Pestañas públicas detectadas:',found);
 
-  // Comprobar candidatos en lotes de 8
-  for(let i=0;i<candidates.length;i+=8){
-    const batch=candidates.slice(i,i+8);
-    const results=await Promise.all(batch.map(checkTab));
-    results.forEach(r=>{if(r)found.push(r);});
+  if(!found.length){
+    // Distinguir entre "sin acceso" y "sin pestañas validas"
+    try{
+      const probe=await fetch(`https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:json&sheet=INFO`);
+      const ptext=await probe.text();
+      if(/sign in|Unauthorized|requires access|no permission|necesitas acceso/i.test(ptext)){
+        throw new Error('La hoja no es pública. Ve a Google Sheets → Compartir → "Cualquiera con el enlace" → Lector.');
+      }
+    }catch(e){
+      if(e.message.includes('pública'))throw e;
+    }
+    throw new Error('No se encontraron pestañas. Verifica que la hoja sea pública y tenga las pestañas INFO, HORARIOS, etc.');
   }
-
-  if(!found.length)throw new Error('No se encontraron pestañas válidas. ¿La hoja tiene las pestañas INFO, HORARIOS, etc.?');
   return found;
 }
 async function driveSearch(q){
@@ -854,8 +857,6 @@ function parseInputList(rows){
   }
   if(hRow<0)return [];
   const fieldRow=rows[hRow]||[];
-  // La fila de nombres de banda es la inmediatamente superior a las cabeceras
-  const nameRow=rows[hRow-1]||[];
 
   // Detectar bloques por la posicion de cada "IN"
   const inCols=[];
@@ -879,11 +880,17 @@ function parseInputList(rows){
     const standsPos=findCol(['STANDS','STAND']);
     const sboxPos=findCol(['S.BOX','SBOX','S BOX']);
     const infoPos=findCol(['INFO']);
-    // Nombre de banda
+    // Nombre de banda: buscar en las filas por encima de la cabecera (fila 0 del bloque),
+    // saltando palabras reservadas (INFO, SOUND CHECK, SHOW, ESCENARIO...)
+    const RESERVED=['INFO','SOUND CHECK','SOUNDCHECK','SHOW','ESCENARIO','IN','INST','MIC','STANDS','S.BOX','SBOX'];
     let name='';
-    for(let c=inCol;c<blockEnd;c++){
-      const v=(nameRow[c]||'').toString().trim();
-      if(v){name=v;break;}
+    for(let r=0;r<hRow&&!name;r++){
+      for(let c=inCol;c<blockEnd;c++){
+        const v=(rows[r]?.[c]||'').toString().trim();
+        if(v&&!RESERVED.includes(v.toUpperCase())&&!/ESCENARIO\s*\d+/i.test(v)){
+          name=v;break;
+        }
+      }
     }
     if(!name)name=`Banda ${bi+1}`;
 
@@ -918,8 +925,6 @@ function parseMonitores(rows){
   let fieldIdx=rows.findIndex(r=>r&&r.filter(c=>/^OUT$/i.test((c||'').toString().trim())).length>=1);
   if(fieldIdx<0)return [];
   const fieldRow=rows[fieldIdx]||[];
-  // La fila de nombres de banda es la inmediatamente superior
-  const nameRow=rows[fieldIdx-1]||[];
   const dataStart=fieldIdx+1;
 
   // Detectar bloques por la posicion de cada "OUT" en la fila de cabeceras
@@ -943,11 +948,16 @@ function parseMonitores(rows){
     const patchPos=findCol(['PATCH']);
     const monPos=findCol(['MONITOR','MON']);
     const notasPos=findCol(['NOTAS','NOTES']);
-    // Nombre de banda: buscar en nameRow dentro del rango del bloque
+    // Nombre de banda: buscar en filas por encima de la cabecera, saltando reservadas
+    const RESERVED=['OUT','PATCH','MONITOR','MON','NOTAS','NOTES','ESCENARIO'];
     let name='';
-    for(let c=outCol;c<blockEnd;c++){
-      const v=(nameRow[c]||'').toString().trim();
-      if(v){name=v;break;}
+    for(let r=0;r<fieldIdx&&!name;r++){
+      for(let c=outCol;c<blockEnd;c++){
+        const v=(rows[r]?.[c]||'').toString().trim();
+        if(v&&!RESERVED.includes(v.toUpperCase())&&!/ESCENARIO\s*\d+/i.test(v)){
+          name=v;break;
+        }
+      }
     }
     if(!name)name=`Banda ${bi+1}`;
 
