@@ -614,6 +614,7 @@ async function syncProject(){
       try{ data.raw[tab]=await sheetsGet(id,`${tab}!A1:BZ200`); }catch(e){ data.raw[tab]=[]; }
     }
     projectData=parseProject(data);
+    window.__CS_DEBUG__=projectData; // accesible desde consola: window.__CS_DEBUG__
     renderSidebar();
     document.getElementById('sidebar').classList.remove('hidden');
     document.getElementById('event-actions').innerHTML=VIEWER_MODE
@@ -1006,94 +1007,77 @@ function parsePersonal(rows){
 */
 function parseOverallMultiStage(rows){
   if(!rows||!rows.length)return {stages:[]};
-  // Detectar inicio de cada bloque de escenario: fila que tiene "ESCENARIO N" en columna 0 (texto vertical) 
-  // o simplemente dividir por columnas vacias completas
   const maxCols=Math.max(...rows.map(r=>r.length));
-  // Buscar columnas completamente vacias (separadores entre escenarios)
-  const colEmpty=[];
-  for(let col=0;col<maxCols;col++){
-    const allEmpty=rows.every(r=>!(r[col]||'').toString().trim());
-    colEmpty.push(allEmpty);
-  }
-  // Agrupar columnas en bloques contiguos no vacios
-  const blocks=[];
-  let curStart=-1;
-  for(let col=0;col<maxCols;col++){
-    if(!colEmpty[col]&&curStart<0)curStart=col;
-    if(colEmpty[col]&&curStart>=0){blocks.push([curStart,col]);curStart=-1;}
-  }
-  if(curStart>=0)blocks.push([curStart,maxCols]);
 
-  const stages=blocks.map((([start,end],bi)=>{
-    // Dentro del bloque: col start = etiquetas de fila (SHOW, ARRIVAL...), start+1.. = bandas
-    const bandRow=rows[0]||[];
-    const bandas=[];
-    for(let c=start+1;c<end;c++){
-      const name=(bandRow[c]||'').toString().trim();
-      if(name)bandas.push(name);
+  // Una columna "tiene banda" si en la fila 0 (cabecera de bandas) hay texto
+  const bandRow=(rows[0]||[]).map(c=>(c||'').toString().trim());
+
+  // Bloques = grupos contiguos de columnas con nombre de banda en fila 0,
+  // separados por >=1 columna vacia consecutiva en la fila de bandas
+  const blocks=[];
+  let curBandCols=[];
+  for(let col=0;col<maxCols;col++){
+    if(bandRow[col]){
+      curBandCols.push(col);
+    } else if(curBandCols.length){
+      blocks.push(curBandCols);
+      curBandCols=[];
     }
+  }
+  if(curBandCols.length)blocks.push(curBandCols);
+
+  const stages=blocks.map((bandCols,bi)=>{
+    const labelCol=bandCols[0]-1; // columna inmediatamente a la izquierda = etiquetas (SHOW, ARRIVAL...)
+    const bandas=bandCols.map(c=>bandRow[c]).filter(Boolean);
     const dataRows=[];
     for(let r=1;r<rows.length;r++){
-      const cat=(rows[r][start]||'').toString().trim();
+      const cat=(rows[r][labelCol]||'').toString().trim();
       if(!cat)continue;
-      const vals=bandas.map((_,i)=>(rows[r][start+1+i]||'').toString().trim());
+      const vals=bandCols.map(c=>(rows[r][c]||'').toString().trim());
       dataRows.push({cat,vals});
     }
     return {name:`Escenario ${bi+1}`,bandas,rows:dataRows};
-  }));
+  });
 
   return {stages};
 }
 
-/* SUMA por dia: bloques de escenario, cada uno con su propia fila "ESCENARIO N" arriba,
-   luego dentro: nombres de banda cada 6 columnas (igual que parseInputList de un solo escenario) */
-function parseInputListMultiStage(rows){
-  if(!rows||!rows.length)return [];
-  const maxCols=Math.max(...rows.map(r=>r.length));
-  // Buscar filas que marcan inicio de escenario: col0 tiene "ESCENARIO N"
-  const stageRowIdx=[];
+/* Encuentra las filas donde col0 contiene "ESCENARIO N" -> marca inicio de cada bloque de escenario */
+function findStageRowBlocks(rows){
+  const idx=[];
   rows.forEach((r,ri)=>{
-    if(/ESCENARIO\s*\d+/i.test((r[0]||'').toString())) stageRowIdx.push(ri);
+    if(/ESCENARIO\s*\d+/i.test((r[0]||'').toString())) idx.push(ri);
   });
-
-  if(!stageRowIdx.length){
-    // Sin division por escenario explicita: tratar todo como Escenario 1
-    return [{name:'Escenario 1',bandas:parseInputList(rows)}];
-  }
-
-  const stages=[];
-  stageRowIdx.forEach((startRow,si)=>{
-    const endRow=stageRowIdx[si+1]!==undefined?stageRowIdx[si+1]:rows.length;
-    const stageName=(rows[startRow][0]||`Escenario ${si+1}`).toString().trim();
-    // Sub-tabla de este escenario, columnas desde 1 (col0 es la etiqueta vertical de escenario)
-    const subRows=rows.slice(startRow,endRow).map(r=>r.slice(1));
-    const bandas=parseInputList(subRows);
-    stages.push({name:stageName,bandas});
-  });
-  return stages;
+  if(!idx.length)return [{name:'Escenario 1',start:0,end:rows.length}];
+  return idx.map((startRow,si)=>({
+    name:(rows[startRow][0]||`Escenario ${si+1}`).toString().trim(),
+    start:startRow,
+    end:idx[si+1]!==undefined?idx[si+1]:rows.length
+  }));
 }
 
-/* MONITORES por dia: misma logica que SUMA pero con estructura de Monitores */
+/* SUMA por dia: bloques de escenario marcados por fila "ESCENARIO N" en col0.
+   Dentro: col1 en adelante = nombres de banda cada 6 columnas, cabeceras IN/INST/MIC/STANDS/S.BOX/INFO mas abajo */
+function parseInputListMultiStage(rows){
+  if(!rows||!rows.length)return [];
+  const blocks=findStageRowBlocks(rows);
+  return blocks.map(({name,start,end})=>{
+    // Sub-tabla: quitar col0 (etiqueta de escenario), y solo las filas de este bloque
+    const subRows=rows.slice(start,end).map(r=>r.slice(1));
+    const bandas=parseInputList(subRows);
+    return {name,bandas};
+  });
+}
+
+/* MONITORES por dia: misma logica que SUMA */
 function parseMonitoresMultiStage(rows){
   if(!rows||!rows.length)return [];
-  const stageRowIdx=[];
-  rows.forEach((r,ri)=>{
-    if(/ESCENARIO\s*\d+/i.test((r[0]||'').toString())) stageRowIdx.push(ri);
-  });
-
-  if(!stageRowIdx.length){
-    return [{name:'Escenario 1',bandas:parseMonitores(rows)}];
-  }
-
-  const stages=[];
-  stageRowIdx.forEach((startRow,si)=>{
-    const endRow=stageRowIdx[si+1]!==undefined?stageRowIdx[si+1]:rows.length;
-    const stageName=(rows[startRow][0]||`Escenario ${si+1}`).toString().trim();
-    const subRows=rows.slice(startRow,endRow).map(r=>r.slice(1));
+  const blocks=findStageRowBlocks(rows);
+  return blocks.map(({name,start,end})=>{
+    const subRows=rows.slice(start,end).map(r=>r.slice(1));
     const bandas=parseMonitores(subRows);
-    stages.push({name:stageName,bandas});
+    return {name,bandas};
   });
-  return stages;
 }
 
 /* PERSONAL multi-dia: estructura real vista en capturas:
@@ -1174,7 +1158,7 @@ function renderFilters(){
   if((activeSection==='horarios')&&days.length>1){
     html+=`<span class="filter-label">Día</span>`;
     html+=`<button class="filter-btn ${activeDay==='all'?'on':''}" onclick="setDay('all')">Todos</button>`;
-    days.forEach(d=>{html+=`<button class="filter-btn ${activeDay===d?'on':''}" onclick="setDay(${JSON.stringify(d)})">${esc(d)}</button>`;});
+    days.forEach(d=>{html+=`<button class="filter-btn ${activeDay===d?'on':''}" onclick='setDay(${JSON.stringify(d)})'>${esc(d)}</button>`;});
   } else {
     html=`<span style="font-size:12px;color:var(--tx3)">${esc(currentProject.name)} · ${esc(projectData.info['NOMBRE EVENTO']||projectData.info['NOMBRE']||'')}</span>`;
   }
@@ -1418,7 +1402,11 @@ function dayStageSelector(prefix){
   html+=`</div>`;
 
   const curDay=days[activeDay===-1?0:activeDay];
-  const stages=curDay?.overall?.stages||curDay?.inputs||curDay?.monitores||[];
+  let stages=[];
+  if(prefix==='ov') stages=curDay?.overall?.stages||[];
+  else if(prefix==='su') stages=curDay?.inputs||[];
+  else stages=curDay?.monitores||[];
+
   if(stages.length>1){
     html+=`<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:18px">
       <span class="filter-label">Escenario</span>
@@ -1569,11 +1557,15 @@ function renderMonitores(){
 }
 
 /* ── PERSONAL ── */
+let persActiveDay='all';
+function setPersDay(d){persActiveDay=d;showSection('personal');}
+
 function renderPersonal(){
   const pers=projectData.personal;
   if(!pers||!Object.keys(pers).length)return emptyMsg('Personal','Añade datos a la hoja PERSONAL.','users');
 
-  const dias=Object.keys(pers);
+  const allDias=Object.keys(pers);
+  const dias=persActiveDay==='all'?allDias:allDias.filter(d=>d===persActiveDay);
   const totalTecs=Object.values(pers)
     .flatMap(escs=>Object.values(escs))
     .flatMap(turnos=>Object.values(turnos))
@@ -1582,6 +1574,14 @@ function renderPersonal(){
 
   let html=`<div class="sec-title">Personal</div>
     <div class="sec-sub">Equipo técnico por día, escenario y turno · ${totalTecs} técnicos</div>`;
+
+  if(allDias.length>1){
+    html+=`<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:18px">
+      <span class="filter-label">Día</span>
+      <button class="filter-btn ${persActiveDay==='all'?'on':''}" onclick="setPersDay('all')">Todos</button>
+      ${allDias.map(d=>`<button class="filter-btn ${persActiveDay===d?'on':''}" onclick='setPersDay(${JSON.stringify(d)})'>${esc(d)}</button>`).join('')}
+    </div>`;
+  }
 
   dias.forEach(dia=>{
     const escenarios=pers[dia];
