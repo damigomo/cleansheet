@@ -299,7 +299,7 @@ const VIEWER_NAME=urlParams.get('name')||'Evento';
 
 let tokenClient, accessToken=null;
 let currentProject=null, projectData=null;
-let activeSection='info', activeStage='all', activeBanda=-1;
+let activeSection='info', activeStage='all', activeBanda=-1, activeDay='all';
 
 const SECTIONS=[
   {id:'info',     label:'Info',     icon:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>'},
@@ -416,9 +416,6 @@ window.addEventListener('load',()=>{
 async function openViewerProject(){
   currentProject={name:VIEWER_NAME,sheets:[{id:VIEWER_SHEET_ID,name:VIEWER_NAME}]};
   activeSection='info';activeStage='all';activeBanda=-1;
-  document.getElementById('event-actions').innerHTML=`
-    <button class="tbtn" onclick="syncProject()"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>Actualizar</button>
-    <button class="tbtn primary" onclick="exportPDF()"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Exportar PDF</button>`;
   await syncProject();
 }
 function signIn(){tokenClient.requestAccessToken({prompt:'select_account consent'});}
@@ -538,21 +535,14 @@ async function syncProject(){
       try{ data.raw[tab]=await sheetsGet(id,`${tab}!A1:BZ200`); }catch(e){ data.raw[tab]=[]; }
     }
     projectData=parseProject(data);
-    // DEBUG: mostrar datos crudos en consola
-    console.log('=== CLEANSHEET DEBUG ===');
-    console.log('TABS:', data.tabs);
-    console.log('INFO raw:', data.raw[data.tabs.find(t=>/INFO/i.test(t))||'']?.slice(0,5));
-    console.log('HORARIOS raw:', data.raw[data.tabs.find(t=>/HORARIOS/i.test(t))||'']?.slice(0,3));
-    console.log('SUMA raw header:', data.raw[data.tabs.find(t=>/SUMA/i.test(t))||'']?.[0]);
-    console.log('MONITORES raw header:', data.raw[data.tabs.find(t=>/MONITORES/i.test(t))||'']?.[0]);
-    console.log('OVERALL raw header:', data.raw[data.tabs.find(t=>/OVERALL/i.test(t))||'']?.[0]);
-    console.log('parsed info:', projectData.info);
-    console.log('parsed horarios count:', projectData.horarios?.length);
-    console.log('parsed inputs:', projectData.inputs?.length, 'bandas');
-    console.log('parsed monitores:', projectData.monitores?.length, 'bandas');
-    console.log('escenarios:', projectData.escenarios);
     renderSidebar();
     document.getElementById('sidebar').classList.remove('hidden');
+    document.getElementById('event-actions').innerHTML=VIEWER_MODE
+      ? `<button class="tbtn" onclick="syncProject()"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>Actualizar</button>
+         <button class="tbtn primary" onclick="exportPDF()"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Exportar PDF</button>`
+      : `<button class="tbtn" onclick="syncProject()"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>Sincronizar</button>
+         <button class="tbtn" onclick="openShareModal()"><svg viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>Compartir</button>
+         <button class="tbtn primary" onclick="exportPDF()"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Exportar PDF</button>`;
     showView('view-event');
     showSection('info');
   }catch(e){console.error(e);alert('Error: '+e.message);}
@@ -917,19 +907,19 @@ function showSection(sec){
 /* ── FILTERS (día/escenario) ── */
 function renderFilters(){
   const f=document.getElementById('event-filters');
-  const stages=projectData.escenarios;
+  const days=(projectData.horariosDays||[]).map(d=>d.name);
   let html='';
-  if((activeSection==='horarios')&&stages.length>1){
-    html+=`<span class="filter-label">Escenario</span>`;
-    html+=`<button class="filter-btn ${activeStage==='all'?'on':''}" onclick="setStage('all')">Todos</button>`;
-    stages.forEach(s=>{html+=`<button class="filter-btn ${activeStage===s?'on':''}" onclick="setStage(${JSON.stringify(s)})">${esc(s)}</button>`;});
+  if((activeSection==='horarios')&&days.length>1){
+    html+=`<span class="filter-label">Día</span>`;
+    html+=`<button class="filter-btn ${activeDay==='all'?'on':''}" onclick="setDay('all')">Todos</button>`;
+    days.forEach(d=>{html+=`<button class="filter-btn ${activeDay===d?'on':''}" onclick="setDay(${JSON.stringify(d)})">${esc(d)}</button>`;});
   } else {
     html=`<span style="font-size:12px;color:var(--tx3)">${esc(currentProject.name)} · ${esc(projectData.info['NOMBRE EVENTO']||projectData.info['NOMBRE']||'')}</span>`;
   }
   html+=`<span class="sync-note" style="margin-left:auto" onclick="syncProject()">↻ Sincronizar</span>`;
   f.innerHTML=html;
 }
-function setStage(s){activeStage=s;showSection('horarios');}
+function setDay(d){activeDay=d;showSection('horarios');}
 
 /* ── INFO ── */
 function getInfo(keys){
@@ -1011,8 +1001,9 @@ function renderInfo(){
 
 /* ── HORARIOS ── */
 function renderHorarios(){
-  const days=projectData.horariosDays||[];
-  if(!days.length)return emptyMsg('Horarios','Añade datos a la hoja HORARIOS.','clock');
+  const allDays=projectData.horariosDays||[];
+  if(!allDays.length)return emptyMsg('Horarios','Añade datos a la hoja HORARIOS.','clock');
+  const days=activeDay==='all'?allDays:allDays.filter(d=>d.name===activeDay);
 
   const timeCols=projectData.horTimeCols||[];
   const colColors={
