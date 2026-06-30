@@ -233,6 +233,11 @@ body.printing-landscape{ }
   tr{page-break-inside:avoid}
   thead{display:table-header-group}
   .day-block,.io-block,.esc-block{page-break-inside:avoid;margin-bottom:14px}
+  /* Cada escenario ocupa como maximo una pagina, sin cortarse a la mitad */
+  .stage-page{page-break-inside:avoid;break-inside:avoid;page-break-before:auto;margin-bottom:10px !important}
+  .stage-page table{font-size:9px !important}
+  .stage-page td,.stage-page th{padding:2px 5px !important}
+  .stage-page-title{font-size:12px !important;margin-bottom:4px !important}
   .sec-title{font-size:18px !important;margin-bottom:4px !important}
   .sec-sub{font-size:11px !important;margin-bottom:10px !important}
   /* Forzar modo claro siempre en impresion */
@@ -406,13 +411,32 @@ function doExportPDF(orientation){
   }
   styleTag.textContent=`@page{size:${orientation};margin:8mm}`;
 
+  // Comprimir cada escenario que exceda el alto de pagina disponible
+  // A4: vertical ~297mm, horizontal ~210mm. Restamos margenes (16mm) -> mm utiles
+  const pageHeightMM=(orientation==='landscape'?210:297)-16;
+  const pageHeightPx=pageHeightMM*3.78; // ~3.78px por mm a 96dpi
+  const scaledEls=[];
+  document.querySelectorAll('.stage-page').forEach(el=>{
+    // medir tras un reflow con estilos de impresion aproximados
+    const h=el.scrollHeight;
+    if(h>pageHeightPx){
+      const scale=Math.max(0.5,pageHeightPx/h);
+      el.style.transformOrigin='top left';
+      el.style.transform=`scale(${scale})`;
+      el.style.width=`${100/scale}%`;
+      scaledEls.push(el);
+    }
+  });
+
   setTimeout(()=>{
     window.print();
     setTimeout(()=>{
       html.setAttribute('data-theme',prevTheme);
       styleTag.textContent='';
+      // restaurar escalas
+      scaledEls.forEach(el=>{el.style.transform='';el.style.width='';el.style.transformOrigin='';});
     },600);
-  },150);
+  },200);
 }
 
 /* ── SHARE LINK ── */
@@ -882,8 +906,10 @@ function parseInputList(rows){
 */
 function parseMonitores(rows){
   if(!rows||rows.length<2)return [];
-  // Detectar ancho de bloque buscando "BANDA" en fila 0
-  const headRow=rows[0]||[];
+  // Buscar la fila que contiene "BANDA N" (puede no ser la fila 0 si hay marcador ESCENARIO arriba)
+  let headIdx=rows.findIndex(r=>r&&r.some(c=>/BANDA\s*\d+/i.test((c||'').toString())));
+  if(headIdx<0)return [];
+  const headRow=rows[headIdx]||[];
   const bands=[];
   headRow.forEach((c,i)=>{
     if(/BANDA\s*\d+/i.test((c||'').toString())){
@@ -892,11 +918,11 @@ function parseMonitores(rows){
   });
   if(!bands.length)return [];
 
-  // fila 1 = cabeceras
-  const fieldRow=rows[1]||[];
+  // fila de cabeceras = la siguiente a la de bandas
+  const fieldRow=rows[headIdx+1]||[];
+  const dataStart=headIdx+2;
   const result=[];
   bands.forEach(({col,name},bi)=>{
-    // ancho de bloque = distancia a la siguiente banda o fin
     const nextCol=bands[bi+1]?bands[bi+1].col:headRow.length;
     const width=nextCol-col;
     const fields=[];
@@ -906,7 +932,7 @@ function parseMonitores(rows){
     const monPos=fields.findIndex(f=>f==='MONITOR'||f==='MON');
     const notasPos=fields.findIndex(f=>f==='NOTAS'||f==='NOTES');
     const outs=[];
-    for(let r=2;r<rows.length;r++){
+    for(let r=dataStart;r<rows.length;r++){
       const row=rows[r]||[];
       const out=outPos>=0?(row[col+outPos]||'').toString().trim():'';
       const patch=patchPos>=0?(row[col+patchPos]||'').toString().trim():'';
@@ -1504,8 +1530,8 @@ function renderOverall(){
     if(ovActiveStage===-1){
       // Todos los escenarios apilados
       day.overall.stages.forEach(stage=>{
-        html+=`<div style="margin-bottom:24px">
-          <div style="font-size:13px;font-weight:700;color:var(--accent);margin-bottom:8px;padding-left:2px">${esc(stage.name)}</div>
+        html+=`<div class="stage-page" style="margin-bottom:24px">
+          <div class="stage-page-title" style="font-size:13px;font-weight:700;color:var(--accent);margin-bottom:8px;padding-left:2px">${esc(stage.name)}</div>
           ${overallStageTable(stage)}
         </div>`;
       });
@@ -1565,12 +1591,20 @@ function setDayStage(prefix,day,stage){
 
 /* ── SUMA ── */
 const SBOX_COLORS={
-  'A':'#4f8ef7','B':'#4cc28a','C':'#f47b7b','D':'#f6c046','E':'#9b7be8','DIRECT':'#2a2a2a','DIRECTO':'#2a2a2a','DI':'#2a2a2a',
+  'A':'#4f8ef7','B':'#4cc28a','C':'#f47b7b','D':'#f6c046','E':'#9b7be8',
 };
 function sboxCell(v){
   if(!v)return '<span style="color:var(--tx3)">·</span>';
-  const key=Object.keys(SBOX_COLORS).find(k=>v.toUpperCase().startsWith(k));
-  const col=key?SBOX_COLORS[key]:null;
+  const up=v.toUpperCase().trim();
+  let col=null;
+  // Primero: DIRECT / DIRECTO / DI -> gris oscuro (comprobar antes que las letras sueltas)
+  if(/^DIRECT/.test(up)||up==='DI'){
+    col='#2a2a2a';
+  } else {
+    // Letra inicial A-E
+    const key=Object.keys(SBOX_COLORS).find(k=>up.startsWith(k));
+    col=key?SBOX_COLORS[key]:null;
+  }
   if(col) return `<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-weight:700;background:${col};color:#fff;font-size:11px">${esc(v)}</span>`;
   return esc(v);
 }
@@ -1632,8 +1666,8 @@ function renderSuma(){
 
     if(suActiveStage===-1){
       day.inputs.forEach(stage=>{
-        html+=`<div style="margin-bottom:24px">
-          <div style="font-size:13px;font-weight:700;color:var(--accent);margin-bottom:8px">${esc(stage.name)}</div>
+        html+=`<div class="stage-page" style="margin-bottom:24px">
+          <div class="stage-page-title" style="font-size:13px;font-weight:700;color:var(--accent);margin-bottom:8px">${esc(stage.name)}</div>
           ${sumaInputsTable(stage.bandas)}
         </div>`;
       });
@@ -1703,8 +1737,8 @@ function renderMonitores(){
 
     if(monActiveStage===-1){
       day.monitores.forEach(stage=>{
-        html+=`<div style="margin-bottom:24px">
-          <div style="font-size:13px;font-weight:700;color:var(--accent);margin-bottom:8px">${esc(stage.name)}</div>
+        html+=`<div class="stage-page" style="margin-bottom:24px">
+          <div class="stage-page-title" style="font-size:13px;font-weight:700;color:var(--accent);margin-bottom:8px">${esc(stage.name)}</div>
           ${monitoresTable(stage.bandas)}
         </div>`;
       });
